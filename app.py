@@ -3,6 +3,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from models import Base, Film
+from routers import (
+    create_films_blueprint,
+    create_users_blueprint,
+    create_bookings_blueprint,
+)
 
 app = Flask(__name__)
 app.config.from_object('config.TestConfig')
@@ -15,41 +20,19 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
 
+# register blueprints (pass SessionLocal as session factory)
+app.register_blueprint(create_films_blueprint(SessionLocal))
+app.register_blueprint(create_users_blueprint(SessionLocal))
+app.register_blueprint(create_bookings_blueprint(SessionLocal))
+
+
 @app.route('/init-db', methods=['POST', 'GET'])
 def init_db_route():
     init_db()
     return jsonify({'status': 'ok', 'msg': 'database initialized'})
 
 
-@app.route('/films', methods=['GET'])
-def list_films():
-    session = SessionLocal()
-    try:
-        films = session.query(Film).all()
-        result = [
-            {'id': f.id, 'title': f.title, 'description': f.description, 'duration': f.duration}
-            for f in films
-        ]
-        return jsonify(result)
-    finally:
-        session.close()
-
-
-@app.route('/films', methods=['POST'])
-def create_film():
-    data = request.get_json() or {}
-    title = data.get('title')
-    if not title:
-        return jsonify({'error': 'title required'}), 400
-    session = SessionLocal()
-    try:
-        film = Film(title=title, description=data.get('description'), duration=data.get('duration'))
-        session.add(film)
-        session.commit()
-        session.refresh(film)
-        return jsonify({'id': film.id, 'title': film.title}), 201
-    finally:
-        session.close()
+# film routes moved to routers/films.py
 
 
 @app.route('/')

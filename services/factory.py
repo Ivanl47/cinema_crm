@@ -1,6 +1,7 @@
 from .film_service import FilmService
 from .user_service import UserService
 from .booking_service import BookingService
+from .admin_service import AdminService
 
 
 class ServiceFactory:
@@ -17,3 +18,6 @@ class ServiceFactory:
 
     def booking(self):
         return BookingService(self.session)
+
+    def admin(self):
+        return AdminService(self.session)

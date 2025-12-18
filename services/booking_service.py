@@ -3,6 +3,10 @@ from models.dao import BookingDAO, SessionDAO, SeatDAO, PaymentDAO
 from models import Booking
 from models.enums import BookingStatus, PaymentStatus
 from datetime import datetime
+from sqlalchemy import select, func
+from models import Session as SessionModel, booking_seats, Seat
+from models.enums import BookingStatus
+from decimal import Decimal
 
 
 class BookingService(BaseService):
@@ -51,3 +55,70 @@ class BookingService(BaseService):
         self.session.commit()
         self.session.refresh(payment)
         return payment
+
+    def seat_matrix_for_session(self, session_id: int) -> list[list[int]]:
+        """Return a 2D matrix (rows x cols) with 1 for occupied seats and 0 for free.
+
+        Uses hall.rows/cols if available, otherwise derives dimensions from seats.
+        Counts seats as occupied if attached to a booking for this session with status CONFIRMED.
+        """
+        sess = self.session_dao.get(session_id)
+        if not sess:
+            raise ValueError("session not found")
+        hall = sess.hall
+        # determine dimensions
+        if hall.rows and hall.cols:
+            rows, cols = hall.rows, hall.cols
+        else:
+            # derive from existing seats
+            q = select(func.max(Seat.row), func.max(Seat.number)).where(Seat.hall_id == hall.id)
+            rmax, cmax = self.session.execute(q).scalar_one()
+            rows = rmax or 0
+            cols = cmax or 0
+
+        # empty matrix
+        matrix = [[0 for _ in range(cols)] for _ in range(rows)]
+
+        # query occupied seats for this session
+        stmt = (
+            select(booking_seats.c.seat_id)
+            .select_from(booking_seats.join(SessionModel, booking_seats.c.booking_id == SessionModel.id))
+        )
+        # Above join incorrect; instead gather via Booking model
+        from models import Booking as BookingModel
+
+        occ_q = (
+            select(Seat.id, Seat.row, Seat.number)
+            .select_from(Seat.__table__.join(booking_seats, Seat.id == booking_seats.c.seat_id).join(BookingModel, booking_seats.c.booking_id == BookingModel.id))
+            .where(BookingModel.session_id == session_id, BookingModel.status == BookingStatus.CONFIRMED)
+        )
+        rows_iter = self.session.execute(occ_q).all()
+        for sid, r, c in rows_iter:
+            if r and c and 1 <= r <= rows and 1 <= c <= cols:
+                matrix[r - 1][c - 1] = 1
+
+        return matrix
+
+    def create_booking_for_seat(self, user_id: int, session_id: int, row: int, number: int):
+        """Create booking for a specific seat (row/number) if available."""
+        sess = self.session_dao.get(session_id)
+        if not sess:
+            raise ValueError("session not found")
+        hall = sess.hall
+        seat = self.session.query(Seat).filter(Seat.hall_id == hall.id, Seat.row == row, Seat.number == number).first()
+        if not seat:
+            raise ValueError("seat not found")
+
+        # check if seat already booked for this session (pending or confirmed)
+        from models import Booking as BookingModel
+
+        occ = (
+            self.session.query(booking_seats)
+            .join(BookingModel, booking_seats.c.booking_id == BookingModel.id)
+            .filter(booking_seats.c.seat_id == seat.id, BookingModel.session_id == session_id)
+            .first()
+        )
+        if occ:
+            raise ValueError("seat already booked")
+
+        return self.create_booking(user_id=user_id, session_id=session_id, seat_ids=[seat.id])

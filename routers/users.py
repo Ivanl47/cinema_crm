@@ -1,4 +1,7 @@
 from flask import Blueprint, jsonify, request
+from cinema_crm.services.factory import ServiceFactory
+from cinema_crm.services.facade import AppFacade
+
 
 def create_users_blueprint(session_factory):
     bp = Blueprint('users', __name__, url_prefix='/users')
@@ -13,11 +16,8 @@ def create_users_blueprint(session_factory):
             return jsonify({'error': 'username, email and password required'}), 400
         session = session_factory()
         try:
-            from models import User
-            user = User(username=username, email=email, password=password)
-            session.add(user)
-            session.commit()
-            session.refresh(user)
+            facade = AppFacade(ServiceFactory(session))
+            user = facade.create_user(username=username, email=email, password=password)
             return jsonify({'id': user.id, 'username': user.username}), 201
         finally:
             session.close()

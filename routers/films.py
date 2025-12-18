@@ -1,4 +1,7 @@
 from flask import Blueprint, jsonify, request
+from cinema_crm.services.factory import ServiceFactory
+from cinema_crm.services.facade import AppFacade
+
 
 def create_films_blueprint(session_factory):
     bp = Blueprint('films', __name__, url_prefix='/films')
@@ -7,11 +10,11 @@ def create_films_blueprint(session_factory):
     def list_films():
         session = session_factory()
         try:
-            films = session.query('Film').all() if False else session.query.__self__
+            facade = AppFacade(ServiceFactory(session))
+            films = facade.list_films()
+            return jsonify([{"id": f.id, "title": f.title} for f in films])
         finally:
             session.close()
-        # NOTE: real implementation is registered in app by passing models; stub kept minimal
-        return jsonify([])
 
     @bp.route('', methods=['POST'])
     def create_film():
@@ -21,12 +24,8 @@ def create_films_blueprint(session_factory):
             return jsonify({'error': 'title required'}), 400
         session = session_factory()
         try:
-            # create and commit directly here for simplicity
-            from models import Film
-            film = Film(title=title, description=data.get('description'), duration=data.get('duration'))
-            session.add(film)
-            session.commit()
-            session.refresh(film)
+            facade = AppFacade(ServiceFactory(session))
+            film = facade.create_film(title=title, description=data.get('description'), duration=data.get('duration'))
             return jsonify({'id': film.id, 'title': film.title}), 201
         finally:
             session.close()

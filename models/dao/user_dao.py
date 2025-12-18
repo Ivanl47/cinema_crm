@@ -1,5 +1,5 @@
 from .base_dao import BaseDAO
-from ..user import User
+from models import User
 
 
 class UserDAO(BaseDAO):

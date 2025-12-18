@@ -1,5 +1,5 @@
 from .base_dao import BaseDAO
-from ..hall import Hall
+from models import Hall
 
 
 class HallDAO(BaseDAO):

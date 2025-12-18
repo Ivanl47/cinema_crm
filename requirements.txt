@@ -1,7 +1,5 @@
-Flask>=2.0
-SQLAlchemy>=1.4
-alembic>=1.8
-pytest>=7.0
-# Optional DB drivers (uncomment as needed)
-# psycopg2-binary>=2.9    # Postgres
-# mysqlclient>=2.1.0     # MySQL
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+PyMySQL==1.1.1
+python-dotenv==1.0.0
+cryptography==42.0.4

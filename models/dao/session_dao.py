@@ -1,5 +1,5 @@
 from .base_dao import BaseDAO
-from ..session import Session as SessionModel
+from models import Session as SessionModel
 
 
 class SessionDAO(BaseDAO):

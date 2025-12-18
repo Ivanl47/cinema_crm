@@ -101,7 +101,16 @@ class AppFacade:
 
     # Film operations
     def create_film(self, title: str, description: str | None, duration: int):
-        return self.film_svc.create_film(title=title, description=description, duration=duration)
+        # Prefer FilmService.create(...). For compatibility with older
+        # implementations that might expose `create_film`, try both.
+        try:
+            return self.film_svc.create(title=title, description=description, duration=duration)
+        except AttributeError:
+            # fallback for older API
+            try:
+                return self.film_svc.create_film(title=title, description=description, duration=duration)
+            except AttributeError:
+                raise
 
     def list_films(self):
         return self.film_svc.list_films()

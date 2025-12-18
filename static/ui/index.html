@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cinema Booking UI</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; display:flex; flex-direction:column; min-height:100vh }
+    header { background:#222; color:#fff; padding:12px 20px }
+    main { flex:1; padding:20px }
+    .halls { display:flex; gap:20px; justify-content:center; margin-top:20px }
+    .hall { border:1px solid #ccc; padding:10px; width:360px }
+    .seats { display:grid; gap:6px; justify-content:center }
+    .seat { width:36px; height:36px; border-radius:4px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; background:#fff; border:1px solid #444 }
+    .seat.occupied { background:#999; cursor:not-allowed }
+    .seat.selected { background: #4caf50; color:white }
+    footer { padding:12px 20px; background:#f4f4f4 }
+    .controls { display:flex; gap:8px; align-items:center }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cinema Booking</h1>
+  </header>
+  <main>
+    <div>
+      <label for="sessionSelect">Choose session:</label>
+      <select id="sessionSelect"></select>
+      <button id="refresh">Refresh</button>
+    </div>
+
+    <div class="halls" id="halls"></div>
+
+    <div style="margin-top:20px">
+      <label for="card">Card number:</label>
+      <input id="card" placeholder="Enter card numbers only">
+      <button id="purchase">Purchase selected seats</button>
+    </div>
+  </main>
+  <footer>
+    <small>Click seats to select. Enter numeric card number to confirm purchase.</small>
+  </footer>
+
+  <script>
+    const sessionSelect = document.getElementById('sessionSelect')
+    const hallsEl = document.getElementById('halls')
+    const refreshBtn = document.getElementById('refresh')
+    const purchaseBtn = document.getElementById('purchase')
+    const cardInput = document.getElementById('card')
+
+    let currentSessionId = null
+    let seatMap = {} // seatId -> element
+    let selected = new Set()
+
+    async function loadSessions(){
+      const res = await fetch('/bookings/sessions')
+      const j = await res.json()
+      const sessions = j.sessions || []
+      sessionSelect.innerHTML = ''
+      sessions.forEach(s => {
+        const opt = document.createElement('option')
+        opt.value = s.id
+        opt.textContent = `Session ${s.id} - Hall ${s.hall_name || s.hall_id}`
+        sessionSelect.appendChild(opt)
+      })
+      if(sessions.length>0){
+        sessionSelect.value = sessions[0].id
+        currentSessionId = sessions[0].id
+        await renderHalls(sessions[0].id)
+      }
+    }
+
+    async function renderHalls(sessionId){
+      currentSessionId = sessionId
+      hallsEl.innerHTML = ''
+      const r = await fetch(`/bookings/sessions/${sessionId}/seats`)
+      if(!r.ok){ hallsEl.textContent = 'No seats'; return }
+      const j = await r.json()
+      const rows = j.rows || 0
+      const cols = j.cols || 0
+      const seats = j.seats || []
+      // create grid container
+      const hallDiv = document.createElement('div')
+      hallDiv.className = 'hall'
+      const grid = document.createElement('div')
+      grid.className = 'seats'
+      grid.style.gridTemplateColumns = `repeat(${cols}, auto)`
+      // map seats by (row,number)
+      const posMap = {}
+      seats.forEach(s => posMap[`${s.row}-${s.number}`] = s)
+      for(let rIdx=1;rIdx<=rows;rIdx++){
+        for(let cIdx=1;cIdx<=cols;cIdx++){
+          const key = `${rIdx}-${cIdx}`
+          const s = posMap[key]
+          const el = document.createElement('div')
+          el.className = 'seat'
+          el.dataset.row = rIdx
+          el.dataset.number = cIdx
+          if(s){
+            el.dataset.seatId = s.id
+            el.textContent = `${rIdx}-${cIdx}`
+            if(s.occupied) el.classList.add('occupied')
+            else el.addEventListener('click', toggleSeat)
+            seatMap[s.id] = el
+          } else {
+            el.textContent = '-' // empty space
+            el.style.visibility = 'hidden'
+          }
+          grid.appendChild(el)
+        }
+      }
+      hallDiv.appendChild(grid)
+      hallsEl.appendChild(hallDiv)
+    }
+
+    function toggleSeat(e){
+      const el = e.currentTarget
+      const seatId = el.dataset.seatId
+      if(!seatId) return
+      if(selected.has(seatId)){
+        selected.delete(seatId)
+        el.classList.remove('selected')
+      } else {
+        selected.add(seatId)
+        el.classList.add('selected')
+      }
+    }
+
+    refreshBtn.addEventListener('click', ()=> renderHalls(currentSessionId))
+    sessionSelect.addEventListener('change', (e)=> renderHalls(e.target.value))
+
+    purchaseBtn.addEventListener('click', async ()=>{
+      if(!currentSessionId) return alert('no session')
+      if(selected.size===0) return alert('choose seats')
+      const card = cardInput.value || ''
+      const payload = { user_id: 1, seat_ids: Array.from(selected).map(x=>parseInt(x)), card }
+      const r = await fetch(`/bookings/sessions/${currentSessionId}/purchase`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+      const j = await r.json()
+      if(!r.ok){ alert(j.error || 'purchase failed'); renderHalls(currentSessionId); selected.clear(); return }
+      // success: refresh
+      alert('purchase successful')
+      selected.clear()
+      await renderHalls(currentSessionId)
+    })
+
+    loadSessions()
+  </script>
+</body>
+</html>

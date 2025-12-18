@@ -1,5 +1,5 @@
 from .base_dao import BaseDAO
-from ..booking import Booking
+from models import Booking
 
 
 class BookingDAO(BaseDAO):

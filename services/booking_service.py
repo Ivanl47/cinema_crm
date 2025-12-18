@@ -1,11 +1,9 @@
 from .base import BaseService
 from models.dao import BookingDAO, SessionDAO, SeatDAO, PaymentDAO
-from models import Booking
 from models.enums import BookingStatus, PaymentStatus
 from datetime import datetime
 from sqlalchemy import select, func
 from models import Session as SessionModel, booking_seats, Seat
-from models.enums import BookingStatus
 from decimal import Decimal
 
 
@@ -79,12 +77,7 @@ class BookingService(BaseService):
         # empty matrix
         matrix = [[0 for _ in range(cols)] for _ in range(rows)]
 
-        # query occupied seats for this session
-        stmt = (
-            select(booking_seats.c.seat_id)
-            .select_from(booking_seats.join(SessionModel, booking_seats.c.booking_id == SessionModel.id))
-        )
-        # Above join incorrect; instead gather via Booking model
+        # query occupied seats for this session via Booking model
         from models import Booking as BookingModel
 
         occ_q = (

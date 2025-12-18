@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
-from cinema_crm.services.factory import ServiceFactory
-from cinema_crm.services.facade import AppFacade
+from services.factory import ServiceFactory
+from services.facade import AppFacade
 
 
 def create_films_blueprint(session_factory):
@@ -12,9 +12,14 @@ def create_films_blueprint(session_factory):
         try:
             facade = AppFacade(ServiceFactory(session))
             films = facade.list_films()
-            return jsonify([{"id": f.id, "title": f.title} for f in films])
+            return jsonify([
+                {"id": f.id, "title": f.title, "description": f.description, "duration": f.duration}
+                for f in films
+            ])
         finally:
             session.close()
+
+    from flask import current_app
 
     @bp.route('', methods=['POST'])
     def create_film():
@@ -26,7 +31,12 @@ def create_films_blueprint(session_factory):
         try:
             facade = AppFacade(ServiceFactory(session))
             film = facade.create_film(title=title, description=data.get('description'), duration=data.get('duration'))
-            return jsonify({'id': film.id, 'title': film.title}), 201
+            return jsonify({'id': film.id, 'title': film.title, 'description': film.description, 'duration': film.duration}), 201
+        except Exception as e:
+            # Log full traceback and return error details (development help)
+            current_app.logger.exception('create_film failed')
+            # Return minimal error info to client for debugging (remove in production)
+            return jsonify({'error': 'internal error', 'details': str(e)}), 500
         finally:
             session.close()
 

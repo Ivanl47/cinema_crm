@@ -2,7 +2,7 @@ import json
 from flask import Flask
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Hall, Seat, Film, Session as SessModel
+from models import Hall, Seat, Film, Session as SessModel
 
 
 def test_bookings_routes_matrix_and_select(engine, tables):
@@ -35,17 +35,12 @@ def test_bookings_routes_matrix_and_select(engine, tables):
     finally:
         s.close()
 
-    # import blueprint factory by loading the module directly to avoid package import issues
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("bookings_module", "./routers/bookings.py")
-    mod = importlib.util.module_from_spec(spec)
-    # ensure project root is on sys.path so `cinema_crm` package imports work
+    # import blueprint factory via package import (ensure project root on sys.path)
     import os, sys
-    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     if PROJECT_ROOT not in sys.path:
         sys.path.insert(0, PROJECT_ROOT)
-    spec.loader.exec_module(mod)
-    create_bookings_blueprint = mod.create_bookings_blueprint
+    from cinema_crm.routers.bookings import create_bookings_blueprint
 
     # create test Flask app and register blueprint with session factory
     app = Flask(__name__)

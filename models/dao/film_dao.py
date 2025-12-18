@@ -1,5 +1,5 @@
 from .base_dao import BaseDAO
-from ..film import Film
+from models import Film
 
 
 class FilmDAO(BaseDAO):

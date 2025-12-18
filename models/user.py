@@ -1,19 +1,23 @@
-from sqlalchemy import Column, Integer, String, Enum as SAEnum
-from sqlalchemy.orm import relationship
-from .base import Base
 from .enums import UserRole
 
 
-class User(Base):
-    __tablename__ = "users"
+def init_user_model(db):
+    class User(db.Model):
+        __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
-    username = Column(String(100), nullable=False, unique=True)
-    email = Column(String(255), nullable=False, unique=True)
-    password = Column(String(255), nullable=False)
-    role = Column(SAEnum(UserRole, native_enum=False), default=UserRole.USER, nullable=False)
+        id = db.Column(db.Integer, primary_key=True)
+        username = db.Column(db.String(100), nullable=False, unique=True)
+        email = db.Column(db.String(255), nullable=False, unique=True)
+        password = db.Column(db.String(255), nullable=False)
+        role = db.Column(db.Enum(UserRole, native_enum=False), default=UserRole.USER, nullable=False)
 
-    bookings = relationship("Booking", back_populates="user")
+        bookings = db.relationship("Booking", back_populates="user")
 
-    def __repr__(self):
-        return f"<User(id={self.id}, username={self.username})>"
+        def __repr__(self):
+            return f"<User(id={self.id}, username={self.username})>"
+
+    return User
+
+
+# placeholder for import-time name binding from models.__init__
+User = None

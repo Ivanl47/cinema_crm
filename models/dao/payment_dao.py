@@ -1,5 +1,5 @@
 from .base_dao import BaseDAO
-from ..payment import Payment
+from models import Payment
 
 
 class PaymentDAO(BaseDAO):

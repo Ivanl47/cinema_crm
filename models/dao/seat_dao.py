@@ -1,6 +1,6 @@
 from typing import Optional
 from .base_dao import BaseDAO
-from ..seat import Seat
+from models import Seat
 
 
 class SeatDAO(BaseDAO):

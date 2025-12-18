@@ -1,20 +1,26 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, DateTime, Numeric, ForeignKey, Enum as SAEnum
 from sqlalchemy.orm import relationship
-from .base import Base
 from .enums import PaymentStatus
 
 
-class Payment(Base):
-    __tablename__ = "payments"
+def init_payment_model(db):
+    class Payment(db.Model):
+        __tablename__ = "payments"
 
-    id = Column(Integer, primary_key=True)
-    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=False)
-    amount = Column(Numeric(10, 2), nullable=False)
-    payment_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    status = Column(SAEnum(PaymentStatus, native_enum=False), default=PaymentStatus.INIT, nullable=False)
+        id = db.Column(db.Integer, primary_key=True)
+        booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=False)
+        amount = db.Column(db.Numeric(10, 2), nullable=False)
+        payment_date = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+        status = db.Column(db.Enum(PaymentStatus, native_enum=False), default=PaymentStatus.INIT, nullable=False)
 
-    booking = relationship("Booking", back_populates="payments")
+        booking = db.relationship("Booking", back_populates="payments")
 
-    def __repr__(self):
-        return f"<Payment(id={self.id}, booking_id={self.booking_id}, amount={self.amount})>"
+        def __repr__(self):
+            return f"<Payment(id={self.id}, booking_id={self.booking_id}, amount={self.amount})>"
+
+    return Payment
+
+
+# placeholder for import-time name binding from models.__init__
+Payment = None

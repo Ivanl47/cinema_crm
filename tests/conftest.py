@@ -16,7 +16,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from models.base import Base
+from models import db
 from models.dao import (
     UserDAO,
     FilmDAO,
@@ -35,9 +35,10 @@ def engine():
 
 @pytest.fixture(scope="session")
 def tables(engine):
-    Base.metadata.create_all(bind=engine)
+    # Use Flask-SQLAlchemy metadata to create tables on the test engine
+    db.metadata.create_all(bind=engine)
     yield
-    Base.metadata.drop_all(bind=engine)
+    db.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture()

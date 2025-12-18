@@ -1,45 +1,79 @@
-from flask import Flask, jsonify, request
+import os
+import pymysql
+from flask import Flask
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 
-from models import Base, Film
+from config import config
+from models import db
 from routers import (
     create_films_blueprint,
     create_users_blueprint,
     create_bookings_blueprint,
 )
 
-app = Flask(__name__)
-app.config.from_object('config.TestConfig')
 
-engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'], echo=app.config.get('SQLALCHEMY_ECHO', False), future=True)
-SessionLocal = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
+def create_app(config_name=None):
+    """Application factory pattern."""
+    if config_name is None:
+        config_name = os.environ.get('FLASK_ENV', 'development')
+    
+    app = Flask(__name__)
+    app.config.from_object(config[config_name])
 
+    # Ensure the physical database exists (create if missing) before initializing SQLAlchemy
+    def ensure_database_exists(app):
+        cfg = app.config
+        db_name = cfg.get('DB_NAME')
+        host = cfg.get('DB_HOST', 'localhost')
+        port = int(cfg.get('DB_PORT', 3306))
+        user = cfg.get('DB_USER', '')
+        password = cfg.get('DB_PASSWORD', '')
 
-def init_db():
-    Base.metadata.create_all(bind=engine)
+        # Use PyMySQL to connect to the server (without selecting a database)
+        try:
+            conn = pymysql.connect(host=host, port=port, user=user, password=password, charset='utf8mb4')
+            with conn.cursor() as cur:
+                cur.execute(f"CREATE DATABASE IF NOT EXISTS {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+            conn.commit()
+            conn.close()
+        except Exception:
+            # Re-raise so startup fails loudly if DB server is unreachable or credentials are wrong
+            raise
 
+    ensure_database_exists(app)
 
-# register blueprints (pass SessionLocal as session factory)
-app.register_blueprint(create_films_blueprint(SessionLocal))
-app.register_blueprint(create_users_blueprint(SessionLocal))
-app.register_blueprint(create_bookings_blueprint(SessionLocal))
+    # Initialize extensions
+    db.init_app(app)
+    
+    # Create a plain SQLAlchemy engine + SessionLocal for existing router factories
+    engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'], echo=app.config.get('SQLALCHEMY_ECHO', False), future=True)
+    SessionLocal = scoped_session(sessionmaker(bind=engine, autoflush=False, autocommit=False))
 
+    # Optional: run precondition loader if explicitly enabled via env var
+    if os.environ.get('PRECONDITION_AUTOLOAD', '').lower() in ('1', 'true', 'yes'):
+        try:
+            from precondition.load_sample import load_sample
+            with app.app_context():
+                print('Running precondition autoload...')
+                load_sample()
+        except Exception as e:
+            # don't fail app startup for precondition; surface a warning
+            print('Precondition autoload failed:', e)
 
-@app.route('/init-db', methods=['POST', 'GET'])
-def init_db_route():
-    init_db()
-    return jsonify({'status': 'ok', 'msg': 'database initialized'})
-
-
-# film routes moved to routers/films.py
-
-
-@app.route('/')
-def health():
-    return jsonify({'status': 'ok'})
+    # Register routes (pass SessionLocal as before)
+    app.register_blueprint(create_films_blueprint(SessionLocal))
+    app.register_blueprint(create_users_blueprint(SessionLocal))
+    app.register_blueprint(create_bookings_blueprint(SessionLocal))
+    
+    # Create tables
+    with app.app_context():
+        db.create_all()
+    
+    return app
 
 
 if __name__ == '__main__':
-    init_db()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Note: Change host to '127.0.0.1' in production and disable debug mode
+    app = create_app()
+    app.run(host='0.0.0.0', port=5000)

@@ -39,6 +39,10 @@ class BookingFacade:
     def cancel_booking(self, booking_id: int):
         return self.booking_svc.cancel_booking(booking_id)
 
+    def cancel_booking_seat(self, booking_id: int, seat_id: int):
+        """Remove a single seat from a booking via booking service."""
+        return self.booking_svc.remove_seat_from_booking(booking_id, seat_id)
+
     def pay_booking(self, booking_id: int, amount):
         # In real app: call payment gateway, then record payment
         return self.booking_svc.add_payment(booking_id, amount)

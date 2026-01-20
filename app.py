@@ -1,6 +1,6 @@
 import os
 import pymysql
-from flask import Flask
+from flask import Flask, send_from_directory
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 
@@ -66,9 +66,40 @@ def create_app(config_name=None):
     app.register_blueprint(create_users_blueprint(SessionLocal))
     app.register_blueprint(create_bookings_blueprint(SessionLocal))
     
+    # Serve single-page UI and its assets from static/ui
+    @app.route('/')
+    def index():
+        return send_from_directory('static/ui', 'index.html')
+
+    @app.route('/ui/<path:filename>')
+    def ui_assets(filename):
+        return send_from_directory('static/ui', filename)
+    
     # Create tables
     with app.app_context():
         db.create_all()
+        # Autoload sample data in development when DB appears empty
+        try:
+            if app.config.get('DEBUG', False):
+                from precondition.load_sample import load_sample
+                load_sample()
+        except Exception as e:
+            app.logger.exception('precondition autoload failed')
+        # Ensure a base admin user exists (username: root, password: root)
+        try:
+            # Use the SessionLocal created above to perform a simple check/create
+            sess = SessionLocal()
+            from services.factory import ServiceFactory
+            from services.facade import AppFacade
+            factory = ServiceFactory(sess)
+            user_svc = factory.user()
+            existing = user_svc.find_by_username('root')
+            if not existing:
+                facade = AppFacade(factory)
+                facade.create_user(username='root', email='root@local', password='root', role='ADMIN')
+            sess.close()
+        except Exception:
+            app.logger.exception('failed to ensure root admin')
     
     return app
 

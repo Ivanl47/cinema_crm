@@ -42,6 +42,30 @@ class BookingService(BaseService):
         self.session.refresh(booking)
         return booking
 
+    def remove_seat_from_booking(self, booking_id: int, seat_id: int):
+        """Remove a single seat from a booking. If the booking becomes empty,
+        mark it as CANCELLED. Returns the updated booking or None if not found.
+        """
+        booking = self.booking_dao.get(booking_id)
+        if not booking:
+            return None
+
+        seat = self.seat_dao.get(seat_id)
+        if not seat:
+            return None
+
+        # Detach the seat if it's part of the booking
+        if seat in booking.seats:
+            booking.seats.remove(seat)
+            # If no seats left, cancel booking
+            if not booking.seats:
+                booking.status = BookingStatus.CANCELLED
+            self.session.commit()
+            self.session.refresh(booking)
+            return booking
+
+        return None
+
     def add_payment(self, booking_id: int, amount):
         payment = self.payment_dao.create(
             booking_id=booking_id,

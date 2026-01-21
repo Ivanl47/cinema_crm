@@ -236,10 +236,64 @@ def create_users_blueprint(session_factory):
                 return jsonify({'error': 'user not found'}), 404
             if getattr(target, 'username', '').lower() == 'root':
                 return jsonify({'error': 'cannot delete root user'}), 403
+            # refuse to delete users who have any non-cancelled bookings
+            # (cancelling bookings sets status to CANCELLED but leaves records)
+            from models.enums import BookingStatus
+            bookings = getattr(target, 'bookings', []) or []
+            has_active = any(getattr(b, 'status', None) != BookingStatus.CANCELLED for b in bookings)
+            if has_active:
+                return jsonify({'error': 'user has existing active bookings; cancel or reassign bookings before delete'}), 400
 
             # perform delete via DAO
+            # remove any cancelled bookings first to avoid FK nullification
+            from models.enums import BookingStatus
+            for b in list(getattr(target, 'bookings', []) or []):
+                if getattr(b, 'status', None) == BookingStatus.CANCELLED:
+                    session.delete(b)
+            # flush removals before deleting the user
+            session.commit()
+
             user_svc.dao.delete(target)
             return jsonify({'deleted_id': user_id}), 200
+        finally:
+            session.close()
+
+    @bp.route('/<int:user_id>/cancel_bookings', methods=['POST'])
+    def cancel_user_bookings(user_id: int):
+        """Allow an admin to cancel all bookings belonging to a user.
+
+        Body: { acting_user_id }
+        """
+        data = request.get_json() or {}
+        acting_user_id = data.get('acting_user_id')
+        if not acting_user_id:
+            return jsonify({'error': 'acting_user_id required'}), 400
+
+        session = session_factory()
+        try:
+            factory = ServiceFactory(session)
+            user_svc = factory.user()
+            try:
+                if not user_svc.is_admin(int(acting_user_id)):
+                    return jsonify({'error': 'forbidden: admin required'}), 403
+            except Exception:
+                return jsonify({'error': 'invalid acting_user_id'}), 400
+
+            target = user_svc.get_user(user_id)
+            if not target:
+                return jsonify({'error': 'user not found'}), 404
+
+            # cancel all bookings for this user
+            from models.enums import BookingStatus
+            cancelled = 0
+            for b in list(getattr(target, 'bookings', []) or []):
+                # only cancel non-cancelled bookings
+                if getattr(b, 'status', None) != BookingStatus.CANCELLED:
+                    b.status = BookingStatus.CANCELLED
+                    cancelled += 1
+
+            session.commit()
+            return jsonify({'cancelled_bookings': cancelled}), 200
         finally:
             session.close()
 

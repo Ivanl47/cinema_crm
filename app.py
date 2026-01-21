@@ -10,6 +10,7 @@ from routers import (
     create_films_blueprint,
     create_users_blueprint,
     create_bookings_blueprint,
+    create_reports_blueprint,
 )
 
 
@@ -65,6 +66,7 @@ def create_app(config_name=None):
     app.register_blueprint(create_films_blueprint(SessionLocal))
     app.register_blueprint(create_users_blueprint(SessionLocal))
     app.register_blueprint(create_bookings_blueprint(SessionLocal))
+    app.register_blueprint(create_reports_blueprint(SessionLocal))
     
     # Serve single-page UI and its assets from static/ui
     @app.route('/')

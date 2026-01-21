@@ -91,6 +91,20 @@
               <label class="form-label small">Users</label>
               <div id="userList" class="list-group mb-2"></div>
               <div class="small text-muted">You can revoke admin rights from other admins (root excluded).</div>
+              <hr/>
+              <label class="form-label small">Reports</label>
+              <div class="mb-2">
+                <div class="input-group mb-2">
+                  <input id="reportStart" type="date" class="form-control form-control-sm" />
+                  <input id="reportEnd" type="date" class="form-control form-control-sm" />
+                </div>
+                <div class="d-flex gap-2 mb-2">
+                  <button id="btnSoldTickets" class="btn btn-sm btn-outline-primary">Sold tickets CSV</button>
+                  <button id="btnRevenue" class="btn btn-sm btn-outline-primary">Revenue per session CSV</button>
+                  <button id="btnOccupancy" class="btn btn-sm btn-outline-primary">Occupancy by day CSV</button>
+                </div>
+                <div class="small text-muted">Select date range and download report.</div>
+              </div>
             </div>
           </div>
         </div>
@@ -565,6 +579,23 @@
           await updateAdminStateAfterChange()
         })
         item.appendChild(btn)
+        // add cancel-all-bookings button beside delete for admins
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'btn btn-sm btn-outline-warning ms-2'
+        cancelBtn.textContent = 'Cancel bookings'
+        if((u.username && u.username.toLowerCase()==='root') || (currentAdminId && u.id === currentAdminId)) cancelBtn.disabled = true
+        cancelBtn.addEventListener('click', async ()=>{
+          if(!confirm(`Cancel all bookings for ${u.username}?`)) return
+          const acting = parseInt(localStorage.getItem('adminId'))
+          if(!acting) return showError('admin not signed in')
+          const res = await fetch(`/users/${u.id}/cancel_bookings`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id: acting})})
+          let jr = {error: 'request failed'}
+          try{ jr = await res.json() }catch(e){}
+          if(!res.ok) return showError(jr.error||'cancel bookings failed')
+          showError(`Cancelled ${jr.cancelled_bookings || 0} bookings for ${u.username}`)
+          await updateAdminStateAfterChange()
+        })
+        item.appendChild(cancelBtn)
         ctr.appendChild(item)
       })
     }
@@ -575,6 +606,57 @@
       updateAdminNotice()
       await loadAdminList()
     }
+
+    // Report download helpers
+    async function downloadCsv(url, filename){
+      try{
+        const r = await fetch(url)
+        if(!r.ok){
+          let j = {}
+          try{ j = await r.json() }catch(e){}
+          return showError(j.error || `report request failed: ${r.status}`)
+        }
+        const blob = await r.blob()
+        const u = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = u
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(u)
+      }catch(e){
+        showError('report download failed')
+      }
+    }
+
+    function reportParams(){
+      const start = document.getElementById('reportStart')?.value
+      const end = document.getElementById('reportEnd')?.value
+      const acting = localStorage.getItem('adminId')
+      if(!acting) { showError('admin not signed in'); return null }
+      if(!start || !end) { showError('select start and end dates'); return null }
+      return { acting, start, end }
+    }
+
+    // wire report buttons
+    try{
+      document.getElementById('btnSoldTickets')?.addEventListener('click', ()=>{
+        const p = reportParams(); if(!p) return
+        const url = `/reports/sold_tickets?acting_user_id=${encodeURIComponent(p.acting)}&start_date=${encodeURIComponent(p.start)}&end_date=${encodeURIComponent(p.end)}`
+        downloadCsv(url, `sold_tickets_${p.start}_to_${p.end}.csv`)
+      })
+      document.getElementById('btnRevenue')?.addEventListener('click', ()=>{
+        const p = reportParams(); if(!p) return
+        const url = `/reports/revenue_per_session?acting_user_id=${encodeURIComponent(p.acting)}&start_date=${encodeURIComponent(p.start)}&end_date=${encodeURIComponent(p.end)}`
+        downloadCsv(url, `revenue_per_session_${p.start}_to_${p.end}.csv`)
+      })
+      document.getElementById('btnOccupancy')?.addEventListener('click', ()=>{
+        const p = reportParams(); if(!p) return
+        const url = `/reports/occupancy_by_day?acting_user_id=${encodeURIComponent(p.acting)}&start_date=${encodeURIComponent(p.start)}&end_date=${encodeURIComponent(p.end)}`
+        downloadCsv(url, `occupancy_${p.start}_to_${p.end}.csv`)
+      })
+    }catch(e){/*ignore*/}
 
     purchaseBtn.addEventListener('click', async ()=>{
       if(!currentSessionId) return alert('no session')

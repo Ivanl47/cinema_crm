@@ -14,9 +14,15 @@ class AdminService(BaseService):
     Facade or controllers) don't need to duplicate role logic.
     """
 
-    def __init__(self, session):
+    def __init__(self, session, user_dao=None, booking_dao=None, session_dao=None):
+        """AdminService may accept DAO instances for DI/testing. Backwards-compatible.
+        """
         super().__init__(session)
-        self.user_dao = UserDAO(session)
+        self.user_dao = user_dao if user_dao is not None else UserDAO(session)
+        from models.dao.booking_dao import BookingDAO
+        from models.dao.session_dao import SessionDAO
+        self.booking_dao = booking_dao if booking_dao is not None else BookingDAO(session)
+        self.session_dao = session_dao if session_dao is not None else SessionDAO(session)
 
     def _ensure_admin(self, acting_user_id: int):
         user = self.user_dao.get(acting_user_id)
@@ -30,10 +36,18 @@ class AdminService(BaseService):
         """
         self._ensure_admin(acting_user_id)
         cutoff = datetime.utcnow() - timedelta(days=30)
+        return self.tickets_sold_between(acting_user_id, cutoff, datetime.utcnow())
+
+    def tickets_sold_between(self, acting_user_id: int, start_dt, end_dt) -> int:
+        """Return seats sold (confirmed bookings) between start_dt and end_dt.
+
+        Requires admin acting_user_id. Extracted for reuse by reporting endpoints.
+        """
+        self._ensure_admin(acting_user_id)
         stmt = (
             select(func.count())
             .select_from(booking_seats.join(Booking, booking_seats.c.booking_id == Booking.id))
-            .where(Booking.booking_date >= cutoff, Booking.status == BookingStatus.CONFIRMED)
+            .where(Booking.booking_date >= start_dt, Booking.booking_date <= end_dt, Booking.status == BookingStatus.CONFIRMED)
         )
         result = self.session.execute(stmt).scalar_one()
         return int(result or 0)

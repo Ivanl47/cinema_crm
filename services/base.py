@@ -1,4 +1,7 @@
-class BaseService:
+from interfaces.service import ServiceInterface
+
+
+class BaseService(ServiceInterface):
     """Common base for services.
 
     Services receive a SQLAlchemy `session` (not a session factory) and create DAO

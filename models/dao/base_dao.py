@@ -1,9 +1,14 @@
 from typing import Type, List, Optional
 from sqlalchemy.orm import Session
+from interfaces.dao import DAOInterface
 
 
-class BaseDAO:
-    """Very small generic DAO helper. Subclass and set `model` attribute."""
+class BaseDAO(DAOInterface):
+    """Very small generic DAO helper. Subclass and set `model` attribute.
+
+    Implements the `DAOInterface` so services may depend on the abstract
+    interface rather than concrete implementations.
+    """
 
     model = None  # override in subclasses
 

@@ -1,6 +1,8 @@
 from typing import List
 from .factory import ServiceFactory
 from models.enums import BookingStatus
+from decimal import Decimal
+from models import booking_seats, Session as SessionModel, Seat as SeatModel, User as UserModel
 
 
 
@@ -56,6 +58,67 @@ class BookingFacade:
         self.booking_svc.session.commit()
         self.booking_svc.session.refresh(b)
         return b
+
+    def purchase_booking(self, session_id: int, user_id: int, seat_ids: List[int], card: str):
+        """Orchestrate a purchase: create booking, validate card, compute per-seat prices,
+        persist prices, record payment and confirm booking.
+
+        Raises ValueError on invalid input (e.g., invalid card or seats already booked).
+        Returns tuple `(booking, total)` on success.
+        """
+        # ensure user exists
+        user = self.user_svc.get_user(user_id)
+        if user is None:
+            raise ValueError("user not found")
+
+        # create booking (BookingService will check availability)
+        booking = self.create_booking(user_id=user_id, session_id=session_id, seat_ids=seat_ids)
+
+        # simple card validation
+        if not (isinstance(card, str) and card.isdigit()):
+            # cancel booking and raise
+            self.cancel_booking(booking.id)
+            raise ValueError("invalid card, booking cancelled")
+
+        # compute prices
+        sess = self.booking_svc.session.query(SessionModel).get(session_id)
+        total = Decimal('0.00')
+        prices = {}
+        concession_mult = Decimal('1.0')
+        if user is not None and hasattr(user, 'concession'):
+            c = getattr(user, 'concession')
+            if c and str(c).upper().endswith('STUDENT'):
+                concession_mult = Decimal('0.8')
+            elif c and str(c).upper().endswith('PENSIONER'):
+                concession_mult = Decimal('0.8')
+            elif c and str(c).upper().endswith('MILITARY'):
+                concession_mult = Decimal('0.2')
+
+        for sid in seat_ids:
+            seat = self.booking_svc.session.query(SeatModel).get(sid)
+            if not seat:
+                continue
+            mult = Decimal('1.0')
+            if getattr(seat, 'category', None) and str(seat.category).upper().endswith('VIP'):
+                mult = Decimal('1.5')
+            price = (sess.base_price or Decimal('0.00')) * mult * concession_mult
+            # quantize/round to 2 decimals using float round for compatibility
+            price = Decimal(round(float(price), 2))
+            prices[sid] = price
+            total += price
+
+        # persist per-seat prices in booking_seats
+        for sid, price in prices.items():
+            self.booking_svc.session.execute(
+                booking_seats.update().where((booking_seats.c.booking_id == booking.id) & (booking_seats.c.seat_id == sid)).values(price=price)
+            )
+        self.booking_svc.session.commit()
+
+        # record payment and confirm
+        self.pay_booking(booking.id, float(total))
+        self.confirm_booking(booking.id)
+
+        return booking, float(total)
 
     def generate_ticket(self, booking_id: int):
         # Stub: return a simple ticket representation

@@ -41,8 +41,8 @@ def create_users_blueprint(session_factory):
                 if not user:
                     return jsonify({'error': 'user not found'}), 404
                 return jsonify({'user': {'id': user.id, 'username': user.username, 'email': user.email}}), 200
-            # list via DAO for full list
-            users = user_svc.dao.list()
+            # list via service for full list
+            users = user_svc.list_users()
             out = [{'id': u.id, 'username': u.username, 'email': u.email} for u in users]
             return jsonify({'users': out}), 200
         finally:
@@ -166,7 +166,7 @@ def create_users_blueprint(session_factory):
 
             from models.enums import UserRole
             # update role to ADMIN
-            user_svc.dao.update(target, role=UserRole.ADMIN)
+            user_svc.update_user_role(target, UserRole.ADMIN)
             return jsonify({'id': target.id, 'username': target.username, 'role': 'ADMIN'}), 200
         finally:
             session.close()
@@ -176,15 +176,10 @@ def create_users_blueprint(session_factory):
         """Return all admin users except the special 'root' account."""
         session = session_factory()
         try:
-            from models import User as UserModel
-            from models.enums import UserRole
-            admins = session.query(UserModel).filter(UserModel.role == UserRole.ADMIN).all()
-            out = []
-            for u in admins:
-                # exclude literal 'root' username from the list
-                if getattr(u, 'username', '').lower() == 'root':
-                    continue
-                out.append({'id': u.id, 'username': u.username, 'email': u.email})
+            factory = ServiceFactory(session)
+            user_svc = factory.user()
+            admins = user_svc.list_admins()
+            out = [{'id': u.id, 'username': u.username, 'email': u.email} for u in admins]
             return jsonify({'admins': out}), 200
         finally:
             session.close()
@@ -205,7 +200,7 @@ def create_users_blueprint(session_factory):
             except Exception:
                 return jsonify({'error': 'invalid acting_user_id'}), 400
 
-            users = user_svc.dao.list()
+            users = user_svc.list_users()
             out = []
             for u in users:
                 concession = getattr(u, 'concession', None)
@@ -253,7 +248,7 @@ def create_users_blueprint(session_factory):
             # flush removals before deleting the user
             session.commit()
 
-            user_svc.dao.delete(target)
+            user_svc.delete_user(target)
             return jsonify({'deleted_id': user_id}), 200
         finally:
             session.close()
@@ -323,7 +318,7 @@ def create_users_blueprint(session_factory):
                 return jsonify({'error': 'cannot demote root user'}), 403
 
             from models.enums import UserRole
-            user_svc.dao.update(target, role=UserRole.USER)
+            user_svc.update_user_role(target, UserRole.USER)
             return jsonify({'id': target.id, 'username': target.username, 'role': 'USER'}), 200
         finally:
             session.close()

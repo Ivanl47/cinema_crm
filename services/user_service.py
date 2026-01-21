@@ -5,9 +5,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 
 class UserService(BaseService):
-    def __init__(self, session):
+    def __init__(self, session, user_dao=None):
+        """UserService may accept a `user_dao` for testing/DI. Backwards-compatible."""
         super().__init__(session)
-        self.dao = UserDAO(session)
+        self.dao = user_dao if user_dao is not None else UserDAO(session)
 
     def create_user(self, username: str, email: str, password: str, role: UserRole | str | None = None, concession: str | None = None):
         """Create a user. Defaults to `UserRole.USER` if no role provided."""
@@ -31,6 +32,26 @@ class UserService(BaseService):
 
     def find_by_username(self, username: str):
         return self.dao.find_by_username(username)
+
+    def list_users(self, offset: int = 0, limit: int = 100):
+        return self.dao.list(offset=offset, limit=limit)
+
+    def update_user_role(self, user, role):
+        return self.dao.update(user, role=role)
+
+    def delete_user(self, user):
+        return self.dao.delete(user)
+
+    def list_admins(self):
+        from models import User as UserModel
+        from models.enums import UserRole
+        qs = self.dao.session.query(UserModel).filter(UserModel.role == UserRole.ADMIN).all()
+        out = []
+        for u in qs:
+            if getattr(u, 'username', '').lower() == 'root':
+                continue
+            out.append(u)
+        return out
 
     def is_admin(self, user_id: int) -> bool:
         """Return True if the user has an admin role."""

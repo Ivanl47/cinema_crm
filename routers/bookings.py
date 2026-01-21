@@ -74,20 +74,9 @@ def create_bookings_blueprint(session_factory):
     def list_sessions():
         session = session_factory()
         try:
-            from models import Session as SessionModel
-            q = session.query(SessionModel).all()
-            out = []
-            for s in q:
-                hall = s.hall
-                out.append({
-                    'id': s.id,
-                    'film_id': s.film_id,
-                    'hall_id': hall.id if hall else None,
-                    'hall_name': hall.name if hall else None,
-                    'rows': hall.rows,
-                    'cols': hall.cols,
-                    'base_price': float(s.base_price) if getattr(s, 'base_price', None) is not None else None,
-                })
+            factory = ServiceFactory(session)
+            booking_svc = factory.booking()
+            out = booking_svc.list_sessions()
             return jsonify({'sessions': out}), 200
         finally:
             session.close()
@@ -96,11 +85,9 @@ def create_bookings_blueprint(session_factory):
     def list_halls():
         session = session_factory()
         try:
-            from models import Hall as HallModel
-            qs = session.query(HallModel).all()
-            out = []
-            for h in qs:
-                out.append({'id': h.id, 'name': h.name, 'rows': h.rows, 'cols': h.cols})
+            factory = ServiceFactory(session)
+            booking_svc = factory.booking()
+            out = booking_svc.list_halls()
             return jsonify({'halls': out}), 200
         finally:
             session.close()
@@ -109,15 +96,13 @@ def create_bookings_blueprint(session_factory):
     def hall_seats(hall_id: int):
         session = session_factory()
         try:
-            from models import Seat, Hall as HallModel
-            hall = session.query(HallModel).get(hall_id)
-            if not hall:
-                return jsonify({'error': 'hall not found'}), 404
-            seats = session.query(Seat).filter(Seat.hall_id == hall_id).all()
-            out = []
-            for s in seats:
-                out.append({'id': s.id, 'row': s.row, 'number': s.number})
-            return jsonify({'seats': out, 'rows': hall.rows, 'cols': hall.cols, 'hall_name': hall.name}), 200
+            factory = ServiceFactory(session)
+            booking_svc = factory.booking()
+            try:
+                result = booking_svc.hall_seats(hall_id)
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 404
+            return jsonify(result), 200
         finally:
             session.close()
 
@@ -125,29 +110,13 @@ def create_bookings_blueprint(session_factory):
     def list_seats(session_id: int):
         session = session_factory()
         try:
-            from models import Seat, Booking as BookingModel, booking_seats
-            from models.enums import BookingStatus
-
-            # Determine the session and fetch seats by its hall (avoid boolean-evaluated SQL clauses)
-            from models import Session as SessionModel
-            sess = session.query(SessionModel).get(session_id)
-            if not sess:
-                return jsonify({'error': 'session not found'}), 404
-            seats = session.query(Seat).filter(Seat.hall_id == sess.hall_id).all()
-
-            out = []
-            for seat in seats:
-                occ = (
-                    session.query(booking_seats)
-                    .join(BookingModel, booking_seats.c.booking_id == BookingModel.id)
-                    .filter(booking_seats.c.seat_id == seat.id, BookingModel.session_id == session_id, BookingModel.status == BookingStatus.CONFIRMED)
-                    .first()
-                )
-                # serialize enum category to plain string for JSON
-                cat = getattr(seat, 'category', None)
-                cat_val = cat.value if getattr(cat, 'value', None) is not None else cat
-                out.append({'id': seat.id, 'row': seat.row, 'number': seat.number, 'occupied': bool(occ), 'category': cat_val})
-            return jsonify({'seats': out, 'rows': sess.hall.rows, 'cols': sess.hall.cols}), 200
+            factory = ServiceFactory(session)
+            booking_svc = factory.booking()
+            try:
+                result = booking_svc.list_seats_for_session(session_id)
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 404
+            return jsonify(result), 200
         finally:
             session.close()
 
@@ -164,58 +133,11 @@ def create_bookings_blueprint(session_factory):
         try:
             factory = ServiceFactory(session)
             facade = BookingFacade(factory)
-            # create booking
-            booking = facade.create_booking(user_id=user_id, session_id=session_id, seat_ids=seat_ids)
-
-            # validate card: digits only -> success, else cancel
-            if not card.isdigit():
-                # cancel booking
-                facade.cancel_booking(booking.id)
+            try:
+                booking, total = facade.purchase_booking(session_id=session_id, user_id=user_id, seat_ids=seat_ids, card=card)
+            except ValueError as e:
                 session.rollback()
-                return jsonify({'error': 'invalid card, booking cancelled'}), 400
-
-            # compute per-seat price and apply VIP multiplier and user concession discounts
-            from models import Session as SessionModel, Seat as SeatModel, User as UserModel, booking_seats
-            sess = session.query(SessionModel).get(session_id)
-            user = session.query(UserModel).get(user_id)
-            # concession multipliers
-            concession_mult = 1.0
-            if user is not None and hasattr(user, 'concession'):
-                c = getattr(user, 'concession')
-                if c and str(c).upper().endswith('STUDENT'):
-                    concession_mult = 0.8
-                elif c and str(c).upper().endswith('PENSIONER'):
-                    concession_mult = 0.8
-                elif c and str(c).upper().endswith('MILITARY'):
-                    concession_mult = 0.2
-
-            total = 0.0
-            prices = {}
-            for sid in seat_ids:
-                seat = session.query(SeatModel).get(sid)
-                if not seat:
-                    # skip missing seat (shouldn't happen)
-                    continue
-                mult = 1.0
-                # treat VIP seat category as 1.5x
-                if getattr(seat, 'category', None) and str(seat.category).upper().endswith('VIP'):
-                    mult = 1.5
-                price = float(sess.base_price) * mult * concession_mult
-                # round to 2 decimals
-                price = round(price, 2)
-                prices[sid] = price
-                total += price
-
-            # persist per-seat prices in booking_seats association
-            for sid, price in prices.items():
-                session.execute(
-                    booking_seats.update().where((booking_seats.c.booking_id == booking.id) & (booking_seats.c.seat_id == sid)).values(price=price)
-                )
-            session.commit()
-
-            # record payment and confirm
-            facade.pay_booking(booking.id, total)
-            facade.confirm_booking(booking.id)
+                return jsonify({'error': str(e)}), 400
 
             # return updated matrix
             booking_svc = factory.booking()
@@ -236,15 +158,13 @@ def create_bookings_blueprint(session_factory):
         user_id = request.args.get('user_id')
         session = session_factory()
         try:
-            from models import Booking
-            q = session.query(Booking)
-            if user_id:
-                try:
-                    uid = int(user_id)
-                    q = q.filter(Booking.user_id == uid)
-                except ValueError:
-                    return jsonify({'error': 'invalid user_id'}), 400
-            books = q.all()
+            factory = ServiceFactory(session)
+            booking_svc = factory.booking()
+            try:
+                uid = int(user_id) if user_id is not None else None
+            except ValueError:
+                return jsonify({'error': 'invalid user_id'}), 400
+            books = booking_svc.list_bookings(user_id=uid)
             out = []
             for b in books:
                 out.append({
@@ -262,8 +182,9 @@ def create_bookings_blueprint(session_factory):
     def get_booking(booking_id: int):
         session = session_factory()
         try:
-            from models import Booking
-            b = session.query(Booking).get(booking_id)
+            factory = ServiceFactory(session)
+            booking_svc = factory.booking()
+            b = booking_svc.get_booking(booking_id)
             if not b:
                 return jsonify({'error': 'booking not found'}), 404
             return jsonify({
@@ -281,25 +202,9 @@ def create_bookings_blueprint(session_factory):
         """Return list of booked seats for given session (includes booking id and price if present)."""
         session = session_factory()
         try:
-            from models import booking_seats, Booking as BookingModel, Seat
-            # include booking owner (user_id) in results to allow owner-specific actions
-            rows = (
-                session.query(booking_seats.c.seat_id, booking_seats.c.booking_id, booking_seats.c.price, BookingModel.user_id)
-                .join(BookingModel, booking_seats.c.booking_id == BookingModel.id)
-                .filter(BookingModel.session_id == session_id)
-                .all()
-            )
-            out = []
-            for seat_id, booking_id, price, user_id in rows:
-                seat = session.query(Seat).get(seat_id)
-                out.append({
-                    'seat_id': seat_id,
-                    'row': seat.row if seat else None,
-                    'number': seat.number if seat else None,
-                    'booking_id': booking_id,
-                    'user_id': user_id,
-                    'price': float(price) if price is not None else None,
-                })
+            factory = ServiceFactory(session)
+            booking_svc = factory.booking()
+            out = booking_svc.booked_seats_for_session(session_id)
             return jsonify({'booked_seats': out}), 200
         finally:
             session.close()
@@ -315,23 +220,10 @@ def create_bookings_blueprint(session_factory):
         try:
             factory = ServiceFactory(session)
             user_svc = factory.user()
-            from models import booking_seats, Booking as BookingModel
-
-            # find the booking that contains this seat for the session
-            row = (
-                session.query(booking_seats.c.booking_id)
-                .join(BookingModel, booking_seats.c.booking_id == BookingModel.id)
-                .filter(booking_seats.c.seat_id == seat_id, BookingModel.session_id == session_id)
-                .first()
-            )
-            if not row:
-                return jsonify({'error': 'booking not found for seat'}), 404
-            booking_id = row[0]
-
-            # fetch booking to check ownership
-            booking = session.query(BookingModel).get(booking_id)
+            booking_svc = factory.booking()
+            booking = booking_svc.get_booking_for_seat(session_id=session_id, seat_id=seat_id)
             if not booking:
-                return jsonify({'error': 'booking not found'}), 404
+                return jsonify({'error': 'booking not found for seat'}), 404
 
             # allow if acting user is admin or owner of booking
             try:

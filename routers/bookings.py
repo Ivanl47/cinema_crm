@@ -86,6 +86,7 @@ def create_bookings_blueprint(session_factory):
                     'hall_name': hall.name if hall else None,
                     'rows': hall.rows,
                     'cols': hall.cols,
+                    'base_price': float(s.base_price) if getattr(s, 'base_price', None) is not None else None,
                 })
             return jsonify({'sessions': out}), 200
         finally:
@@ -142,7 +143,10 @@ def create_bookings_blueprint(session_factory):
                     .filter(booking_seats.c.seat_id == seat.id, BookingModel.session_id == session_id, BookingModel.status == BookingStatus.CONFIRMED)
                     .first()
                 )
-                out.append({'id': seat.id, 'row': seat.row, 'number': seat.number, 'occupied': bool(occ)})
+                # serialize enum category to plain string for JSON
+                cat = getattr(seat, 'category', None)
+                cat_val = cat.value if getattr(cat, 'value', None) is not None else cat
+                out.append({'id': seat.id, 'row': seat.row, 'number': seat.number, 'occupied': bool(occ), 'category': cat_val})
             return jsonify({'seats': out, 'rows': sess.hall.rows, 'cols': sess.hall.cols}), 200
         finally:
             session.close()
@@ -170,19 +174,53 @@ def create_bookings_blueprint(session_factory):
                 session.rollback()
                 return jsonify({'error': 'invalid card, booking cancelled'}), 400
 
-            # compute amount (use session base_price * seats)
-            from models import Session as SessionModel
+            # compute per-seat price and apply VIP multiplier and user concession discounts
+            from models import Session as SessionModel, Seat as SeatModel, User as UserModel, booking_seats
             sess = session.query(SessionModel).get(session_id)
-            amount = float(sess.base_price) * len(seat_ids)
+            user = session.query(UserModel).get(user_id)
+            # concession multipliers
+            concession_mult = 1.0
+            if user is not None and hasattr(user, 'concession'):
+                c = getattr(user, 'concession')
+                if c and str(c).upper().endswith('STUDENT'):
+                    concession_mult = 0.8
+                elif c and str(c).upper().endswith('PENSIONER'):
+                    concession_mult = 0.8
+                elif c and str(c).upper().endswith('MILITARY'):
+                    concession_mult = 0.2
+
+            total = 0.0
+            prices = {}
+            for sid in seat_ids:
+                seat = session.query(SeatModel).get(sid)
+                if not seat:
+                    # skip missing seat (shouldn't happen)
+                    continue
+                mult = 1.0
+                # treat VIP seat category as 1.5x
+                if getattr(seat, 'category', None) and str(seat.category).upper().endswith('VIP'):
+                    mult = 1.5
+                price = float(sess.base_price) * mult * concession_mult
+                # round to 2 decimals
+                price = round(price, 2)
+                prices[sid] = price
+                total += price
+
+            # persist per-seat prices in booking_seats association
+            for sid, price in prices.items():
+                session.execute(
+                    booking_seats.update().where((booking_seats.c.booking_id == booking.id) & (booking_seats.c.seat_id == sid)).values(price=price)
+                )
+            session.commit()
 
             # record payment and confirm
-            facade.pay_booking(booking.id, amount)
+            facade.pay_booking(booking.id, total)
             facade.confirm_booking(booking.id)
 
             # return updated matrix
             booking_svc = factory.booking()
             matrix = booking_svc.seat_matrix_for_session(session_id)
-            return jsonify({'matrix': matrix, 'booking_id': booking.id}), 201
+            return jsonify({'matrix': matrix, 'booking_id': booking.id, 'amount': total}), 201
         except ValueError as e:
             session.rollback()
             return jsonify({'error': str(e)}), 400

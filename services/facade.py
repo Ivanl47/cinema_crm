@@ -100,8 +100,8 @@ class AppFacade:
         self.film_svc = factory.film()
 
     # User operations
-    def create_user(self, username: str, email: str, password: str, role=None):
-        return self.user_svc.create_user(username=username, email=email, password=password, role=role)
+    def create_user(self, username: str, email: str, password: str, role=None, concession=None):
+        return self.user_svc.create_user(username=username, email=email, password=password, role=role, concession=concession)
 
     # Film operations
     def create_film(self, title: str, description: str | None, duration: int):

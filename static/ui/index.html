@@ -60,6 +60,7 @@
             <div class="mb-2">
               <label class="form-label">Selected seats</label>
               <div id="selectedList">—</div>
+              <div id="selectedPrice" class="small mt-1">—</div>
             </div>
             <div class="mb-2">
               <label class="form-label">Card number</label>
@@ -86,6 +87,9 @@
               <hr/>
               <label class="form-label small">Admins</label>
               <div id="adminList" class="list-group mb-2"></div>
+              <hr/>
+              <label class="form-label small">Users</label>
+              <div id="userList" class="list-group mb-2"></div>
               <div class="small text-muted">You can revoke admin rights from other admins (root excluded).</div>
             </div>
           </div>
@@ -189,7 +193,9 @@
       const bookedJson = bookedResp.ok ? await bookedResp.json() : {booked_seats: []}
       const booked = bookedJson.booked_seats || []
       const bookedMap = {}
-      booked.forEach(b => { bookedMap[b.seat_id] = b })
+      booked.forEach(b => { bookedMap[String(b.seat_id)] = b })
+      // debug: show booked map and current user for troubleshooting highlighting
+      try{ console.debug('renderHalls booked:', { sessionId, bookedCount: booked.length, bookedMap, currentUserId: localStorage.getItem('userId') }) }catch(e){}
       // create grid container
       const hallDiv = document.createElement('div')
       hallDiv.className = 'hall'
@@ -209,16 +215,17 @@
           el.dataset.number = cIdx
             if(s){
             el.dataset.seatId = s.id
+            el.dataset.category = s.category
             el.textContent = `${rIdx}-${cIdx}`
             if(s.occupied) {
               el.classList.add('occupied')
-              const binfo = bookedMap[s.id]
-              const currentUserId = parseInt(localStorage.getItem('userId'))
+              const binfo = bookedMap[String(s.id)]
+              const currentUserId = localStorage.getItem('userId') ? String(localStorage.getItem('userId')) : null
               const isAdmin = !!localStorage.getItem('isAdmin')
               // if admin, allow admin cancel
               if(isAdmin){
                 el.addEventListener('click', adminCancelSeat)
-              } else if(binfo && currentUserId && parseInt(binfo.user_id) === currentUserId){
+              } else if(binfo && currentUserId && String(binfo.user_id) === currentUserId){
                 // owner of booking may cancel their own seat
                 el.classList.add('owned')
                 el.addEventListener('click', userCancelSeat)
@@ -226,7 +233,7 @@
             } else {
               el.addEventListener('click', toggleSeat)
             }
-            seatMap[s.id] = el
+            seatMap[String(s.id)] = el
           } else {
             el.textContent = '-' // empty space
             el.style.visibility = 'hidden'
@@ -256,6 +263,7 @@
           // normal user signed in via top fields
           localStorage.setItem('userId', j.user_id)
           localStorage.setItem('username', j.username || u)
+          if(j.concession) localStorage.setItem('userConcession', j.concession)
           document.body.classList.remove('admin-mode')
         }
         if(currentSessionId) await renderHalls(currentSessionId)
@@ -317,24 +325,30 @@
       const u = document.getElementById('userName').value
       const p = document.getElementById('userPass').value
       const e = document.getElementById('userEmail').value
+      const concession = (document.getElementById('userConcession') && document.getElementById('userConcession').value) || null
       if(!u||!p) return showError('username and password required')
-      const r = await fetch('/users/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p,email:e})})
+      const r = await fetch('/users/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p,email:e,concession:concession})})
       const j = await r.json()
       if(!r.ok) return showError(j.error||'auth failed')
-      localStorage.setItem('userId', j.user_id)
+      localStorage.setItem('userId', String(j.user_id))
       localStorage.setItem('username', j.username)
+      if(j.concession) localStorage.setItem('userConcession', j.concession)
       updateAdminNotice()
       try{ document.getElementById('userAuthModal').querySelector('[data-bs-dismiss]')?.click() }catch(e){/*ignore*/}
+      // refresh hall rendering so owned seats are immediately reflected
+      if(currentSessionId) await renderHalls(currentSessionId)
       if(pendingPurchase){
         // perform purchase that was pending
         const payload = pendingPurchase
         pendingPurchase = null
         await doPurchase(payload)
       }
+      // ensure UI shows ownership even when no purchase occurred
+      if(!pendingPurchase && currentSessionId) await renderHalls(currentSessionId)
     }
     // submit on Enter in auth modal fields
     try{
-      ['userName','userPass','userEmail'].forEach(id=>{
+      ['userName','userPass','userEmail','userConcession'].forEach(id=>{
         const el = document.getElementById(id)
         if(!el) return
         el.addEventListener('keydown', (ev)=>{
@@ -518,6 +532,41 @@
         item.appendChild(btn)
         ctr.appendChild(item)
       })
+      // also load users list for admins
+      await loadUserList()
+    }
+
+    async function loadUserList(){
+      const ctr = document.getElementById('userList')
+      if(!ctr) return
+      ctr.innerHTML = ''
+      const acting = localStorage.getItem('adminId')
+      if(!acting) return
+      const r = await fetch(`/users/all?acting_user_id=${acting}`)
+      if(!r.ok) return
+      const j = await r.json()
+      const users = j.users || []
+      const currentAdminId = parseInt(localStorage.getItem('adminId'))
+      users.forEach(u=>{
+        const item = document.createElement('div')
+        item.className = 'list-group-item d-flex justify-content-between align-items-center'
+        item.textContent = `${u.username} <${u.email}> ${u.concession ? `(${u.concession})` : ''}`
+        const btn = document.createElement('button')
+        btn.className = 'btn btn-sm btn-outline-danger'
+        btn.textContent = 'Delete'
+        // disable deleting root or self
+        if((u.username && u.username.toLowerCase()==='root') || (currentAdminId && u.id === currentAdminId)) btn.disabled = true
+        btn.addEventListener('click', async ()=>{
+          if(!confirm(`Delete user ${u.username}?`)) return
+          const res = await fetch(`/users/${u.id}`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id: parseInt(localStorage.getItem('adminId'))})})
+          const jr = await res.json()
+          if(!res.ok) return showError(jr.error||'delete failed')
+          showError(`Deleted ${u.username}`)
+          await updateAdminStateAfterChange()
+        })
+        item.appendChild(btn)
+        ctr.appendChild(item)
+      })
     }
 
     async function updateAdminStateAfterChange(){
@@ -557,7 +606,18 @@
 
     // restore admin mode if previously logged in
     if(localStorage.getItem('isAdmin')) document.body.classList.add('admin-mode')
-    loadSessionsAndHalls().then(()=> updateAdminNotice())
+    async function loadUserConcessionOnStart(){
+      const uid = localStorage.getItem('userId')
+      if(!uid) return
+      if(localStorage.getItem('userConcession')) return
+      try{
+        const r = await fetch(`/users/${uid}`)
+        if(!r.ok) return
+        const j = await r.json()
+        if(j.concession) localStorage.setItem('userConcession', j.concession)
+      }catch(e){/*ignore*/}
+    }
+    loadSessionsAndHalls().then(()=>{ updateAdminNotice(); loadUserConcessionOnStart() })
   </script>
   <!-- message modal -->
   <div class="modal fade" id="msgModal" tabindex="-1" aria-hidden="true">
@@ -579,6 +639,15 @@
           <div class="mb-2"><input id="userName" class="form-control" placeholder="Username"></div>
           <div class="mb-2"><input id="userEmail" class="form-control" placeholder="Email (optional)"></div>
           <div class="mb-2"><input id="userPass" class="form-control" type="password" placeholder="Password"></div>
+          <div class="mb-2">
+            <label class="form-label small">Concession</label>
+            <select id="userConcession" class="form-select form-select-sm">
+              <option value="NONE">No concession</option>
+              <option value="STUDENT">Student (20% off)</option>
+              <option value="PENSIONER">Pensioner (20% off)</option>
+              <option value="MILITARY">Military (80% off)</option>
+            </select>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
@@ -592,11 +661,35 @@
     // initialize bootstrap modal
     try{ bootstrapMsgModal = new bootstrap.Modal(document.getElementById('msgModal')) }catch(e){/* ignore */}
     // helper to update displayed selected seats
+    function getConcessionMultiplier(){
+      const c = (localStorage.getItem('userConcession') || 'NONE').toUpperCase()
+      if(c === 'STUDENT' || c === 'PENSIONER') return 0.8
+      if(c === 'MILITARY') return 0.2
+      return 1.0
+    }
+
     function updateSelectedList(){
       const el = document.getElementById('selectedList')
+      const priceEl = document.getElementById('selectedPrice')
       if(!el) return
-      if(selected.size===0){ el.textContent='—'; return }
+      if(selected.size===0){ el.textContent='—'; if(priceEl) priceEl.textContent='—'; purchaseBtn.textContent='Purchase selected seats'; purchaseBtn.disabled = true; return }
       el.textContent = Array.from(selected).map(id=>seatMap[id] ? seatMap[id].textContent : id).join(', ')
+      // compute total price using session base_price, VIP multiplier and user concession (if available)
+      const sess = sessionsList.find(s => String(s.id) === String(currentSessionId)) || {}
+      const base = parseFloat(sess.base_price) || 0
+      let total = 0
+      Array.from(selected).forEach(id => {
+        const seatEl = seatMap[id]
+        if(!seatEl) return
+        const cat = (seatEl.dataset.category || '').toUpperCase()
+        const mult = cat.includes('VIP') ? 1.5 : 1.0
+        total += base * mult
+      })
+      const concessionMult = getConcessionMultiplier()
+      const totalAfter = Math.round(total * concessionMult * 100) / 100
+      if(priceEl) priceEl.textContent = `Total: $${totalAfter.toFixed(2)}`
+      purchaseBtn.textContent = `Purchase selected seats (Total: $${totalAfter.toFixed(2)})`
+      purchaseBtn.disabled = false
     }
     // wire auth submit
     try{ document.getElementById('authSubmit').addEventListener('click', handleUserAuth) }catch(e){/*ignore*/}

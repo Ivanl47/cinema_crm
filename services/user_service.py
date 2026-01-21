@@ -9,7 +9,7 @@ class UserService(BaseService):
         super().__init__(session)
         self.dao = UserDAO(session)
 
-    def create_user(self, username: str, email: str, password: str, role: UserRole | str | None = None):
+    def create_user(self, username: str, email: str, password: str, role: UserRole | str | None = None, concession: str | None = None):
         """Create a user. Defaults to `UserRole.USER` if no role provided."""
         """Create a user. Defaults to `UserRole.USER` if no role provided.
 
@@ -21,6 +21,9 @@ class UserService(BaseService):
             payload["role"] = UserRole.USER
         else:
             payload["role"] = role
+        # optionally set concession category (expects string matching ConcessionCategory)
+        if concession is not None:
+            payload["concession"] = concession
         return self.dao.create(**payload)
 
     def get_user(self, user_id: int):

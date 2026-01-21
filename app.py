@@ -1,7 +1,7 @@
 import os
 import pymysql
 from flask import Flask, send_from_directory
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from config import config
@@ -78,6 +78,22 @@ def create_app(config_name=None):
     # Create tables
     with app.app_context():
         db.create_all()
+        # Ensure `concession` column exists on `users` table (safe, idempotent)
+        try:
+            with engine.connect() as conn:
+                try:
+                    has_col = conn.execute(text("SHOW COLUMNS FROM users LIKE 'concession'"))
+                    if has_col.fetchone() is None:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN concession VARCHAR(50) DEFAULT 'NONE'"))
+                except Exception:
+                    # fallback: try generic ALTER for SQLite or other DBs
+                    try:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN concession VARCHAR(50)"))
+                        conn.execute(text("UPDATE users SET concession = 'NONE' WHERE concession IS NULL"))
+                    except Exception:
+                        app.logger.exception('could not ensure users.concession column')
+        except Exception:
+            app.logger.exception('failed to run concession column migration')
         # Autoload sample data in development when DB appears empty
         try:
             if app.config.get('DEBUG', False):

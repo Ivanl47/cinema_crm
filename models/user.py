@@ -1,4 +1,4 @@
-from .enums import UserRole
+from .enums import UserRole, ConcessionCategory
 
 
 def init_user_model(db):
@@ -10,6 +10,7 @@ def init_user_model(db):
         email = db.Column(db.String(255), nullable=False, unique=True)
         password = db.Column(db.String(255), nullable=False)
         role = db.Column(db.Enum(UserRole, native_enum=False), default=UserRole.USER, nullable=False)
+        concession = db.Column(db.Enum(ConcessionCategory, native_enum=False), default=ConcessionCategory.NONE, nullable=False)
 
         bookings = db.relationship("Booking", back_populates="user")
 

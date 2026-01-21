@@ -23,7 +23,9 @@ def create_users_blueprint(session_factory):
             session = session_factory()
             try:
                 facade = AppFacade(ServiceFactory(session))
-                user = facade.create_user(username=username, email=email, password=password)
+                # accept optional concession category
+                concession = data.get('concession')
+                user = facade.create_user(username=username, email=email, password=password, concession=concession)
                 return jsonify({'id': user.id, 'username': user.username}), 201
             finally:
                 session.close()
@@ -55,7 +57,10 @@ def create_users_blueprint(session_factory):
             user = user_svc.get_user(user_id)
             if not user:
                 return jsonify({'error': 'user not found'}), 404
-            return jsonify({'id': user.id, 'username': user.username, 'email': user.email}), 200
+            # include concession if present (serialize enum to string)
+            concession = getattr(user, 'concession', None)
+            concession_val = concession.value if getattr(concession, 'value', None) is not None else concession
+            return jsonify({'id': user.id, 'username': user.username, 'email': user.email, 'concession': concession_val}), 200
         finally:
             session.close()
 
@@ -120,12 +125,18 @@ def create_users_blueprint(session_factory):
                     return jsonify({'error': 'invalid credentials'}), 401
                 from models.enums import UserRole
                 is_admin = getattr(user, 'role', None) == UserRole.ADMIN
-                return jsonify({'user_id': user.id, 'username': user.username, 'is_admin': bool(is_admin)}), 200
+                # include concession in response for client-side pricing
+                concession = getattr(user, 'concession', None)
+                concession_val = concession.value if getattr(concession, 'value', None) is not None else concession
+                return jsonify({'user_id': user.id, 'username': user.username, 'is_admin': bool(is_admin), 'concession': concession_val}), 200
 
-            # create user
+            # create user (allow optional concession)
+            concession = data.get('concession')
             facade = AppFacade(factory)
-            created = facade.create_user(username=username, email=email or f'{username}@local', password=password)
-            return jsonify({'user_id': created.id, 'username': created.username, 'is_admin': False}), 201
+            created = facade.create_user(username=username, email=email or f'{username}@local', password=password, concession=concession)
+            c = getattr(created, 'concession', None)
+            cval = c.value if getattr(c, 'value', None) is not None else c
+            return jsonify({'user_id': created.id, 'username': created.username, 'is_admin': False, 'concession': cval}), 201
         finally:
             session.close()
 
@@ -175,6 +186,60 @@ def create_users_blueprint(session_factory):
                     continue
                 out.append({'id': u.id, 'username': u.username, 'email': u.email})
             return jsonify({'admins': out}), 200
+        finally:
+            session.close()
+
+    @bp.route('/all', methods=['GET'])
+    def list_all_users():
+        """Return all users to admins. Requires `acting_user_id` query param."""
+        acting_user_id = request.args.get('acting_user_id')
+        if not acting_user_id:
+            return jsonify({'error': 'acting_user_id required'}), 400
+        session = session_factory()
+        try:
+            factory = ServiceFactory(session)
+            user_svc = factory.user()
+            try:
+                if not user_svc.is_admin(int(acting_user_id)):
+                    return jsonify({'error': 'forbidden: admin required'}), 403
+            except Exception:
+                return jsonify({'error': 'invalid acting_user_id'}), 400
+
+            users = user_svc.dao.list()
+            out = []
+            for u in users:
+                concession = getattr(u, 'concession', None)
+                concession_val = concession.value if getattr(concession, 'value', None) is not None else concession
+                out.append({'id': u.id, 'username': u.username, 'email': u.email, 'role': getattr(u, 'role', None).value if getattr(getattr(u, 'role', None), 'value', None) is not None else getattr(u, 'role', None), 'concession': concession_val})
+            return jsonify({'users': out}), 200
+        finally:
+            session.close()
+
+    @bp.route('/<int:user_id>', methods=['DELETE'])
+    def delete_user(user_id: int):
+        data = request.get_json() or {}
+        acting_user_id = data.get('acting_user_id')
+        if not acting_user_id:
+            return jsonify({'error': 'acting_user_id required'}), 400
+        session = session_factory()
+        try:
+            factory = ServiceFactory(session)
+            user_svc = factory.user()
+            try:
+                if not user_svc.is_admin(int(acting_user_id)):
+                    return jsonify({'error': 'forbidden: admin required'}), 403
+            except Exception:
+                return jsonify({'error': 'invalid acting_user_id'}), 400
+
+            target = user_svc.get_user(user_id)
+            if not target:
+                return jsonify({'error': 'user not found'}), 404
+            if getattr(target, 'username', '').lower() == 'root':
+                return jsonify({'error': 'cannot delete root user'}), 403
+
+            # perform delete via DAO
+            user_svc.dao.delete(target)
+            return jsonify({'deleted_id': user_id}), 200
         finally:
             session.close()
 

@@ -23,3 +23,10 @@ class SeatCategory(enum.Enum):
     STANDARD = "STANDARD"
     VIP = "VIP"
     BALCONY = "BALCONY"
+
+
+class ConcessionCategory(enum.Enum):
+    NONE = "NONE"
+    STUDENT = "STUDENT"
+    PENSIONER = "PENSIONER"
+    MILITARY = "MILITARY"

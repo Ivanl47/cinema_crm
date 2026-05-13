@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cinema Booking UI</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/static/ui/styles.css" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="#">Cinema</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbars" aria-controls="navbars" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbars">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item"><a class="nav-link active" href="#">Home</a></li>
+        </ul>
+        <form class="d-flex" role="search" onsubmit="return false;">
+          <input id="adminUser" class="form-control form-control-sm me-2" placeholder="admin" style="width:120px">
+          <input id="adminPass" class="form-control form-control-sm me-2" type="password" placeholder="password" style="width:120px">
+          <button id="adminLogin" class="btn btn-sm btn-outline-light me-2">Login</button>
+          <button id="adminLogout" class="btn btn-sm btn-outline-warning me-2">Logout</button>
+          <button id="userRegister" class="btn btn-sm btn-outline-light">Register</button>
+        </form>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container py-4">
+    <div class="row">
+      <div class="col-lg-8 mb-4">
+        <div class="card">
+          <div class="card-body">
+            <div class="d-flex gap-2 align-items-center mb-3">
+              <div class="flex-fill">
+                <label class="form-label mb-1" for="sessionSelect">Session</label>
+                <select id="sessionSelect" class="form-select"></select>
+              </div>
+              <div class="flex-fill">
+                <label class="form-label mb-1" for="hallSelect">Hall</label>
+                <select id="hallSelect" class="form-select"></select>
+              </div>
+              <div class="align-self-end">
+                <button id="refresh" class="btn btn-primary">Refresh</button>
+              </div>
+            </div>
+
+            <div id="halls" class="d-flex flex-wrap justify-content-center gap-3"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-4">
+        <div class="card mb-3">
+          <div class="card-body">
+            <h5 class="card-title">Booking</h5>
+            <div class="mb-2">
+              <label class="form-label">Selected seats</label>
+              <div id="selectedList">—</div>
+              <div id="selectedPrice" class="small mt-1">—</div>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Card number</label>
+              <input id="card" class="form-control" placeholder="Enter digits only">
+            </div>
+            <div class="d-grid">
+              <button id="purchase" class="btn btn-success">Purchase selected seats</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title">Admin</h5>
+            <p class="small text-muted">Admin mode highlights occupied seats in green and enables cancellation.</p>
+            <div id="adminNotice">Not logged in</div>
+            <div id="adminControls" class="mt-2" style="display:none">
+              <label class="form-label small">Promote user to admin</label>
+              <div class="input-group mb-2">
+                <input id="promoteUsername" class="form-control form-control-sm" placeholder="username">
+                <button id="promoteBtn" class="btn btn-sm btn-outline-danger">Promote</button>
+              </div>
+              <div class="small text-muted">Enter existing username and press Promote.</div>
+              <hr/>
+              <label class="form-label small">Admins</label>
+              <div id="adminList" class="list-group mb-2"></div>
+              <hr/>
+              <label class="form-label small">Users</label>
+              <div id="userList" class="list-group mb-2"></div>
+              <div class="small text-muted">You can revoke admin rights from other admins (root excluded).</div>
+              <hr/>
+              <label class="form-label small">Reports</label>
+              <div class="mb-2">
+                <div class="input-group mb-2">
+                  <input id="reportStart" type="date" class="form-control form-control-sm" />
+                  <input id="reportEnd" type="date" class="form-control form-control-sm" />
+                </div>
+                <div class="d-flex gap-2 mb-2">
+                  <button id="btnSoldTickets" class="btn btn-sm btn-outline-primary">Sold tickets CSV</button>
+                  <button id="btnRevenue" class="btn btn-sm btn-outline-primary">Revenue per session CSV</button>
+                  <button id="btnOccupancy" class="btn btn-sm btn-outline-primary">Occupancy by day CSV</button>
+                </div>
+                <div class="small text-muted">Select date range and download report.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="bg-light py-3">
+    <div class="container"><small class="text-muted">Click seats to select. Use admin login to cancel individual seats.</small></div>
+  </footer>
+
+  <script>
+    const sessionSelect = document.getElementById('sessionSelect')
+    const hallSelect = document.getElementById('hallSelect')
+    const hallsEl = document.getElementById('halls')
+    const refreshBtn = document.getElementById('refresh')
+    const purchaseBtn = document.getElementById('purchase')
+    const cardInput = document.getElementById('card')
+    let sessionsList = []
+
+    let currentSessionId = null
+    let currentHallId = null
+    let seatMap = {} // seatId -> element
+    let selected = new Set()
+
+    async function populateSessions(sessions){
+      sessionSelect.innerHTML = ''
+      sessions.forEach(s => {
+        const opt = document.createElement('option')
+        opt.value = s.id
+        opt.textContent = `Session ${s.id} - Hall ${s.hall_name || s.hall_id}`
+        sessionSelect.appendChild(opt)
+      })
+    }
+
+    function filterSessionsByHall(hallId){
+      // prefer numeric hall id comparison to avoid mismatches from names/types
+      const hid = Number(hallId)
+      const filtered = sessionsList.filter(s => (s.hall_id !== undefined && Number(s.hall_id) === hid) || (s.hall_name !== undefined && String(s.hall_name) === String(hallId)))
+      if(filtered.length===0){
+        sessionSelect.innerHTML = ''
+        currentSessionId = null
+        hallsEl.textContent = 'No sessions for selected hall'
+        return
+      }
+      populateSessions(filtered)
+      // pick first matching session and render its occupancy
+      sessionSelect.value = filtered[0].id
+      currentSessionId = filtered[0].id
+      renderHalls(filtered[0].id)
+    }
+
+    async function loadSessionsAndHalls(){
+      // load sessions
+      const res = await fetch('/bookings/sessions')
+      const j = await res.json()
+      sessionsList = j.sessions || []
+      // initially populate all sessions
+      await populateSessions(sessionsList)
+
+      // load halls for standalone hall viewing
+      const hr = await fetch('/bookings/halls')
+      const hj = await hr.json()
+      const halls = hj.halls || []
+      hallSelect.innerHTML = ''
+      halls.forEach(h => {
+        const opt = document.createElement('option')
+        opt.value = h.id
+        opt.textContent = `${h.name} (${h.rows || '?'}x${h.cols || '?'})`
+        hallSelect.appendChild(opt)
+      })
+      if(halls.length>0){
+        // set selected hall and filter sessions to that hall
+        hallSelect.value = halls[0].id
+        currentHallId = halls[0].id
+        // filter sessions for the selected hall and render the session occupancy
+        filterSessionsByHall(halls[0].id)
+      } else {
+        // if no halls, but sessions exist, render first session
+        if(sessionsList.length>0){
+          sessionSelect.value = sessionsList[0].id
+          currentSessionId = sessionsList[0].id
+          await renderHalls(sessionsList[0].id)
+        }
+      }
+    }
+
+    async function renderHalls(sessionId){
+      // render seats for a session (shows occupancy)
+      currentSessionId = sessionId
+      hallsEl.innerHTML = ''
+      const r = await fetch(`/bookings/sessions/${sessionId}/seats`)
+      if(!r.ok){ hallsEl.textContent = 'No seats'; return }
+      const j = await r.json()
+      const rows = j.rows || 0
+      const cols = j.cols || 0
+      const seats = j.seats || []
+      // fetch booked seat details (includes booking_id and user_id)
+      const bookedResp = await fetch(`/bookings/sessions/${sessionId}/booked`)
+      const bookedJson = bookedResp.ok ? await bookedResp.json() : {booked_seats: []}
+      const booked = bookedJson.booked_seats || []
+      const bookedMap = {}
+      booked.forEach(b => { bookedMap[String(b.seat_id)] = b })
+      // debug: show booked map and current user for troubleshooting highlighting
+      try{ console.debug('renderHalls booked:', { sessionId, bookedCount: booked.length, bookedMap, currentUserId: localStorage.getItem('userId') }) }catch(e){}
+      // create grid container
+      const hallDiv = document.createElement('div')
+      hallDiv.className = 'hall'
+      const grid = document.createElement('div')
+      grid.className = 'seats'
+      grid.style.gridTemplateColumns = `repeat(${cols}, auto)`
+      // map seats by (row,number)
+      const posMap = {}
+      seats.forEach(s => posMap[`${s.row}-${s.number}`] = s)
+      for(let rIdx=1;rIdx<=rows;rIdx++){
+        for(let cIdx=1;cIdx<=cols;cIdx++){
+          const key = `${rIdx}-${cIdx}`
+          const s = posMap[key]
+          const el = document.createElement('div')
+          el.className = 'seat'
+          el.dataset.row = rIdx
+          el.dataset.number = cIdx
+            if(s){
+            el.dataset.seatId = s.id
+            el.dataset.category = s.category
+            el.textContent = `${rIdx}-${cIdx}`
+            if(s.occupied) {
+              el.classList.add('occupied')
+              const binfo = bookedMap[String(s.id)]
+              const currentUserId = localStorage.getItem('userId') ? String(localStorage.getItem('userId')) : null
+              const isAdmin = !!localStorage.getItem('isAdmin')
+              // if admin, allow admin cancel
+              if(isAdmin){
+                el.addEventListener('click', adminCancelSeat)
+              } else if(binfo && currentUserId && String(binfo.user_id) === currentUserId){
+                // owner of booking may cancel their own seat
+                el.classList.add('owned')
+                el.addEventListener('click', userCancelSeat)
+              }
+            } else {
+              el.addEventListener('click', toggleSeat)
+            }
+            seatMap[String(s.id)] = el
+          } else {
+            el.textContent = '-' // empty space
+            el.style.visibility = 'hidden'
+          }
+          grid.appendChild(el)
+        }
+      }
+      hallDiv.appendChild(grid)
+      hallsEl.appendChild(hallDiv)
+    }
+
+    async function adminLogin(){
+      const u = document.getElementById('adminUser').value
+      const p = document.getElementById('adminPass').value
+      if(!u||!p) return alert('enter credentials')
+      // Try normal auth endpoint first (will create user if missing)
+      let resp = await fetch('/users/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p})})
+      let j = await resp.json()
+      if(resp.ok){
+        // if returned is_admin flag, treat as admin
+        if(j.is_admin){
+          localStorage.setItem('isAdmin','1')
+          localStorage.setItem('adminId', j.user_id)
+          localStorage.setItem('adminUsername', j.username || u)
+          document.body.classList.add('admin-mode')
+        } else {
+          // normal user signed in via top fields
+          localStorage.setItem('userId', j.user_id)
+          localStorage.setItem('username', j.username || u)
+          if(j.concession) localStorage.setItem('userConcession', j.concession)
+          document.body.classList.remove('admin-mode')
+        }
+        if(currentSessionId) await renderHalls(currentSessionId)
+        await updateAdminStateAfterChange()
+        return
+      }
+
+      // If normal auth failed, allow admin bootstrap via /users/admin/login for common defaults
+      try{
+        resp = await fetch('/users/admin/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p})})
+        j = await resp.json()
+        if(!resp.ok) return showError(j.error||'login failed')
+        localStorage.setItem('isAdmin','1')
+        localStorage.setItem('adminId', j.user_id)
+        localStorage.setItem('adminUsername', u)
+        document.body.classList.add('admin-mode')
+        if(currentSessionId) await renderHalls(currentSessionId)
+        await updateAdminStateAfterChange()
+      }catch(e){
+        return showError('login failed')
+      }
+    }
+
+    function adminLogout(){
+      // clear admin and any user session data so logged-out view shows correctly
+      localStorage.removeItem('isAdmin')
+      localStorage.removeItem('adminId')
+      localStorage.removeItem('adminUsername')
+      localStorage.removeItem('userId')
+      localStorage.removeItem('username')
+      document.body.classList.remove('admin-mode')
+      if(currentSessionId) renderHalls(currentSessionId)
+      updateAdminNotice()
+    }
+
+    async function userCancelSeat(e){
+      const el = e.currentTarget
+      const seatId = el.dataset.seatId
+      if(!seatId) return
+      if(!confirm('Cancel your booking for this seat?')) return
+      const acting_user_id = parseInt(localStorage.getItem('userId'))
+      if(!acting_user_id) return showError('not signed in')
+      const r = await fetch(`/bookings/sessions/${currentSessionId}/seats/${seatId}/cancel`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id})})
+      const j = await r.json()
+      if(!r.ok) return showError(j.error||'cancel failed')
+      showError('booking cancelled')
+      await renderHalls(currentSessionId)
+    }
+
+    // User auth / create flow
+    let pendingPurchase = null
+    function showUserAuthModal(purchasePayload){
+      pendingPurchase = purchasePayload || null
+      const modal = new bootstrap.Modal(document.getElementById('userAuthModal'))
+      modal.show()
+    }
+
+    async function handleUserAuth(){
+      const u = document.getElementById('userName').value
+      const p = document.getElementById('userPass').value
+      const e = document.getElementById('userEmail').value
+      const concession = (document.getElementById('userConcession') && document.getElementById('userConcession').value) || null
+      if(!u||!p) return showError('username and password required')
+      const r = await fetch('/users/auth', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u,password:p,email:e,concession:concession})})
+      const j = await r.json()
+      if(!r.ok) return showError(j.error||'auth failed')
+      localStorage.setItem('userId', String(j.user_id))
+      localStorage.setItem('username', j.username)
+      if(j.concession) localStorage.setItem('userConcession', j.concession)
+      updateAdminNotice()
+      try{ document.getElementById('userAuthModal').querySelector('[data-bs-dismiss]')?.click() }catch(e){/*ignore*/}
+      // refresh hall rendering so owned seats are immediately reflected
+      if(currentSessionId) await renderHalls(currentSessionId)
+      if(pendingPurchase){
+        // perform purchase that was pending
+        const payload = pendingPurchase
+        pendingPurchase = null
+        await doPurchase(payload)
+      }
+      // ensure UI shows ownership even when no purchase occurred
+      if(!pendingPurchase && currentSessionId) await renderHalls(currentSessionId)
+    }
+    // submit on Enter in auth modal fields
+    try{
+      ['userName','userPass','userEmail','userConcession'].forEach(id=>{
+        const el = document.getElementById(id)
+        if(!el) return
+        el.addEventListener('keydown', (ev)=>{
+          if(ev.key === 'Enter'){
+            ev.preventDefault()
+            handleUserAuth()
+          }
+        })
+      })
+    }catch(e){/*ignore*/}
+
+    async function adminCancelSeat(e){
+      const el = e.currentTarget
+      const seatId = el.dataset.seatId
+      if(!seatId) return
+      if(!confirm('Cancel booking for this seat?')) return
+      const acting_user_id = parseInt(localStorage.getItem('adminId'))
+      const r = await fetch(`/bookings/sessions/${currentSessionId}/seats/${seatId}/cancel`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id})})
+      const j = await r.json()
+      if(!r.ok) return showError(j.error||'cancel failed')
+      showError('booking cancelled')
+      await renderHalls(currentSessionId)
+    }
+
+    // bootstrap modal instance for messages
+    let bootstrapMsgModal = null
+    function showError(msg){
+      const msgEl = document.getElementById('modalBodyMsg')
+      if(msgEl) msgEl.textContent = msg
+      if(bootstrapMsgModal) bootstrapMsgModal.show()
+      else alert(msg)
+    }
+
+    function updateAdminNotice(){
+      const el = document.getElementById('adminNotice')
+      if(!el) return
+      const isAdmin = !!localStorage.getItem('isAdmin')
+      const username = localStorage.getItem('adminUsername')
+      const userId = localStorage.getItem('userId')
+      const userName = localStorage.getItem('username')
+      if(isAdmin){
+        el.textContent = `Admin: ${username || 'admin'}`
+        el.classList.remove('text-muted')
+        // show admin controls
+        const ac = document.getElementById('adminControls')
+        if(ac) ac.style.display = 'block'
+        // admin list will be refreshed by explicit state updates
+      } else if(userId){
+        el.textContent = `Logged in as ${userName || userId}`
+        el.classList.remove('text-muted')
+        const ac = document.getElementById('adminControls')
+        if(ac) ac.style.display = 'none'
+      } else {
+        el.textContent = 'Not logged in'
+        el.classList.add('text-muted')
+        const ac = document.getElementById('adminControls')
+        if(ac) ac.style.display = 'none'
+      }
+    }
+    
+
+    async function renderHall(hallId){
+      // render hall layout without session occupancy
+      currentHallId = hallId
+      hallsEl.innerHTML = ''
+      const r = await fetch(`/bookings/halls/${hallId}/seats`)
+      if(!r.ok){ hallsEl.textContent = 'No seats'; return }
+      const j = await r.json()
+      const rows = j.rows || 0
+      const cols = j.cols || 0
+      const seats = j.seats || []
+      const hallDiv = document.createElement('div')
+      hallDiv.className = 'hall'
+      const title = document.createElement('div')
+      title.textContent = `Hall: ${j.hall_name || hallId}`
+      hallDiv.appendChild(title)
+      const grid = document.createElement('div')
+      grid.className = 'seats'
+      grid.style.gridTemplateColumns = `repeat(${cols}, auto)`
+      const posMap = {}
+      seats.forEach(s => posMap[`${s.row}-${s.number}`] = s)
+      for(let rIdx=1;rIdx<=rows;rIdx++){
+        for(let cIdx=1;cIdx<=cols;cIdx++){
+          const key = `${rIdx}-${cIdx}`
+          const s = posMap[key]
+          const el = document.createElement('div')
+          el.className = 'seat'
+          if(s){
+            el.dataset.seatId = s.id
+            el.textContent = `${rIdx}-${cIdx}`
+            // viewing only: don't attach click for booking
+          } else {
+            el.textContent = '-'
+            el.style.visibility = 'hidden'
+          }
+          grid.appendChild(el)
+        }
+      }
+      hallDiv.appendChild(grid)
+      hallsEl.appendChild(hallDiv)
+      // clear selection when switching view
+      selected.clear()
+      updateSelectedList()
+    }
+
+    function toggleSeat(e){
+      const el = e.currentTarget
+      const seatId = el.dataset.seatId
+      if(!seatId) return
+      if(selected.has(seatId)){
+        selected.delete(seatId)
+        el.classList.remove('selected')
+      } else {
+        selected.add(seatId)
+        el.classList.add('selected')
+      }
+      updateSelectedList()
+    }
+
+    refreshBtn.addEventListener('click', ()=> renderHalls(currentSessionId))
+    sessionSelect.addEventListener('change', (e)=> renderHalls(e.target.value))
+    // when hall changes, filter session list to available sessions in that hall
+    // (do not render both the static hall layout and the session occupancy simultaneously)
+    hallSelect.addEventListener('change', (e)=>{ filterSessionsByHall(e.target.value) })
+    document.getElementById('adminLogin').addEventListener('click', adminLogin)
+    document.getElementById('adminLogout').addEventListener('click', adminLogout)
+    // allow creating an account without purchasing
+    const regBtn = document.getElementById('userRegister')
+    if(regBtn) regBtn.addEventListener('click', ()=> showUserAuthModal(null))
+
+    // admin promote handler
+    const promoteBtn = document.getElementById('promoteBtn')
+    if(promoteBtn){
+      promoteBtn.addEventListener('click', async ()=>{
+        const uname = document.getElementById('promoteUsername').value
+        if(!uname) return showError('enter username to promote')
+        // find user by username
+        const ur = await fetch(`/users?username=${encodeURIComponent(uname)}`)
+        const uj = await ur.json()
+        if(!ur.ok) return showError(uj.error||'user not found')
+        const uid = uj.user && uj.user.id
+        if(!uid) return showError('user not found')
+        const acting = parseInt(localStorage.getItem('adminId'))
+        if(!acting) return showError('admin not signed in')
+        const r = await fetch(`/users/${uid}/promote`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id: acting})})
+        const j = await r.json()
+        if(!r.ok) return showError(j.error||'promote failed')
+        showError(`Promoted ${j.username || uname} to admin`)
+        updateAdminNotice()
+      })
+    }
+
+    // load admin list (excluding root) and render demote buttons
+    async function loadAdminList(){
+      const ctr = document.getElementById('adminList')
+      if(!ctr) return
+      ctr.innerHTML = ''
+      const r = await fetch('/users/admins')
+      if(!r.ok) return
+      const j = await r.json()
+      const admins = j.admins || []
+      const currentAdminId = parseInt(localStorage.getItem('adminId'))
+      admins.forEach(a=>{
+        const item = document.createElement('div')
+        item.className = 'list-group-item d-flex justify-content-between align-items-center'
+        item.textContent = `${a.username} <${a.email}>`
+        const btn = document.createElement('button')
+        btn.className = 'btn btn-sm btn-outline-secondary'
+        btn.textContent = 'Demote'
+        // disable demote button for self
+        if(currentAdminId && a.id === currentAdminId) btn.disabled = true
+        btn.addEventListener('click', async ()=>{
+          if(!confirm(`Revoke admin rights from ${a.username}?`)) return
+          const acting = parseInt(localStorage.getItem('adminId'))
+          const res = await fetch(`/users/${a.id}/demote`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id: acting})})
+          const jr = await res.json()
+          if(!res.ok) return showError(jr.error||'demote failed')
+          showError(`${a.username} demoted`)
+          await updateAdminStateAfterChange()
+        })
+        item.appendChild(btn)
+        ctr.appendChild(item)
+      })
+      // also load users list for admins
+      await loadUserList()
+    }
+
+    async function loadUserList(){
+      const ctr = document.getElementById('userList')
+      if(!ctr) return
+      ctr.innerHTML = ''
+      const acting = localStorage.getItem('adminId')
+      if(!acting) return
+      const r = await fetch(`/users/all?acting_user_id=${acting}`)
+      if(!r.ok) return
+      const j = await r.json()
+      const users = j.users || []
+      const currentAdminId = parseInt(localStorage.getItem('adminId'))
+      users.forEach(u=>{
+        const item = document.createElement('div')
+        item.className = 'list-group-item d-flex justify-content-between align-items-center'
+        item.textContent = `${u.username} <${u.email}> ${u.concession ? `(${u.concession})` : ''}`
+        const btn = document.createElement('button')
+        btn.className = 'btn btn-sm btn-outline-danger'
+        btn.textContent = 'Delete'
+        // disable deleting root or self
+        if((u.username && u.username.toLowerCase()==='root') || (currentAdminId && u.id === currentAdminId)) btn.disabled = true
+        btn.addEventListener('click', async ()=>{
+          if(!confirm(`Delete user ${u.username}?`)) return
+          const res = await fetch(`/users/${u.id}`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id: parseInt(localStorage.getItem('adminId'))})})
+          const jr = await res.json()
+          if(!res.ok) return showError(jr.error||'delete failed')
+          showError(`Deleted ${u.username}`)
+          await updateAdminStateAfterChange()
+        })
+        item.appendChild(btn)
+        // add cancel-all-bookings button beside delete for admins
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'btn btn-sm btn-outline-warning ms-2'
+        cancelBtn.textContent = 'Cancel bookings'
+        if((u.username && u.username.toLowerCase()==='root') || (currentAdminId && u.id === currentAdminId)) cancelBtn.disabled = true
+        cancelBtn.addEventListener('click', async ()=>{
+          if(!confirm(`Cancel all bookings for ${u.username}?`)) return
+          const acting = parseInt(localStorage.getItem('adminId'))
+          if(!acting) return showError('admin not signed in')
+          const res = await fetch(`/users/${u.id}/cancel_bookings`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({acting_user_id: acting})})
+          let jr = {error: 'request failed'}
+          try{ jr = await res.json() }catch(e){}
+          if(!res.ok) return showError(jr.error||'cancel bookings failed')
+          showError(`Cancelled ${jr.cancelled_bookings || 0} bookings for ${u.username}`)
+          await updateAdminStateAfterChange()
+        })
+        item.appendChild(cancelBtn)
+        ctr.appendChild(item)
+      })
+    }
+
+    async function updateAdminStateAfterChange(){
+      // refresh adminControls and admin list after role changes
+      await renderHalls(currentSessionId)
+      updateAdminNotice()
+      await loadAdminList()
+    }
+
+    // Report download helpers
+    async function downloadCsv(url, filename){
+      try{
+        const r = await fetch(url)
+        if(!r.ok){
+          let j = {}
+          try{ j = await r.json() }catch(e){}
+          return showError(j.error || `report request failed: ${r.status}`)
+        }
+        const blob = await r.blob()
+        const u = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = u
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(u)
+      }catch(e){
+        showError('report download failed')
+      }
+    }
+
+    function reportParams(){
+      const start = document.getElementById('reportStart')?.value
+      const end = document.getElementById('reportEnd')?.value
+      const acting = localStorage.getItem('adminId')
+      if(!acting) { showError('admin not signed in'); return null }
+      if(!start || !end) { showError('select start and end dates'); return null }
+      return { acting, start, end }
+    }
+
+    // wire report buttons
+    try{
+      document.getElementById('btnSoldTickets')?.addEventListener('click', ()=>{
+        const p = reportParams(); if(!p) return
+        const url = `/reports/sold_tickets?acting_user_id=${encodeURIComponent(p.acting)}&start_date=${encodeURIComponent(p.start)}&end_date=${encodeURIComponent(p.end)}`
+        downloadCsv(url, `sold_tickets_${p.start}_to_${p.end}.csv`)
+      })
+      document.getElementById('btnRevenue')?.addEventListener('click', ()=>{
+        const p = reportParams(); if(!p) return
+        const url = `/reports/revenue_per_session?acting_user_id=${encodeURIComponent(p.acting)}&start_date=${encodeURIComponent(p.start)}&end_date=${encodeURIComponent(p.end)}`
+        downloadCsv(url, `revenue_per_session_${p.start}_to_${p.end}.csv`)
+      })
+      document.getElementById('btnOccupancy')?.addEventListener('click', ()=>{
+        const p = reportParams(); if(!p) return
+        const url = `/reports/occupancy_by_day?acting_user_id=${encodeURIComponent(p.acting)}&start_date=${encodeURIComponent(p.start)}&end_date=${encodeURIComponent(p.end)}`
+        downloadCsv(url, `occupancy_${p.start}_to_${p.end}.csv`)
+      })
+    }catch(e){/*ignore*/}
+
+    purchaseBtn.addEventListener('click', async ()=>{
+      if(!currentSessionId) return alert('no session')
+      if(selected.size===0) return alert('choose seats')
+      const card = cardInput.value || ''
+      const userId = localStorage.getItem('userId')
+      const payload = { user_id: userId ? parseInt(userId) : null, seat_ids: Array.from(selected).map(x=>parseInt(x)), card }
+      if(!userId){
+        // prompt to sign in or create account; after auth, purchase will continue
+        showUserAuthModal(payload)
+        return
+      }
+      await doPurchase(payload)
+    })
+
+    async function doPurchase(payload){
+      if(!payload) return
+      // ensure payload.user_id set from storage
+      if(!payload.user_id) payload.user_id = parseInt(localStorage.getItem('userId'))
+      const r = await fetch(`/bookings/sessions/${currentSessionId}/purchase`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+      const j = await r.json()
+      if(!r.ok){ showError(j.error || 'purchase failed'); await renderHalls(currentSessionId); selected.clear(); updateSelectedList(); return }
+      // success: refresh
+      showError('purchase successful')
+      selected.clear()
+      updateSelectedList()
+      await renderHalls(currentSessionId)
+    }
+
+    // restore admin mode if previously logged in
+    if(localStorage.getItem('isAdmin')) document.body.classList.add('admin-mode')
+    async function loadUserConcessionOnStart(){
+      const uid = localStorage.getItem('userId')
+      if(!uid) return
+      if(localStorage.getItem('userConcession')) return
+      try{
+        const r = await fetch(`/users/${uid}`)
+        if(!r.ok) return
+        const j = await r.json()
+        if(j.concession) localStorage.setItem('userConcession', j.concession)
+      }catch(e){/*ignore*/}
+    }
+    loadSessionsAndHalls().then(()=>{ updateAdminNotice(); loadUserConcessionOnStart() })
+  </script>
+  <!-- message modal -->
+  <div class="modal fade" id="msgModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-body" id="modalBodyMsg"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- user auth modal -->
+  <div class="modal fade" id="userAuthModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">Sign in or create account</h5></div>
+        <div class="modal-body">
+          <div class="mb-2"><input id="userName" class="form-control" placeholder="Username"></div>
+          <div class="mb-2"><input id="userEmail" class="form-control" placeholder="Email (optional)"></div>
+          <div class="mb-2"><input id="userPass" class="form-control" type="password" placeholder="Password"></div>
+          <div class="mb-2">
+            <label class="form-label small">Concession</label>
+            <select id="userConcession" class="form-select form-select-sm">
+              <option value="NONE">No concession</option>
+              <option value="STUDENT">Student (20% off)</option>
+              <option value="PENSIONER">Pensioner (20% off)</option>
+              <option value="MILITARY">Military (80% off)</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-primary btn-sm" id="authSubmit">Sign in / Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // initialize bootstrap modal
+    try{ bootstrapMsgModal = new bootstrap.Modal(document.getElementById('msgModal')) }catch(e){/* ignore */}
+    // helper to update displayed selected seats
+    function getConcessionMultiplier(){
+      const c = (localStorage.getItem('userConcession') || 'NONE').toUpperCase()
+      if(c === 'STUDENT' || c === 'PENSIONER') return 0.8
+      if(c === 'MILITARY') return 0.2
+      return 1.0
+    }
+
+    function updateSelectedList(){
+      const el = document.getElementById('selectedList')
+      const priceEl = document.getElementById('selectedPrice')
+      if(!el) return
+      if(selected.size===0){ el.textContent='—'; if(priceEl) priceEl.textContent='—'; purchaseBtn.textContent='Purchase selected seats'; purchaseBtn.disabled = true; return }
+      el.textContent = Array.from(selected).map(id=>seatMap[id] ? seatMap[id].textContent : id).join(', ')
+      // compute total price using session base_price, VIP multiplier and user concession (if available)
+      const sess = sessionsList.find(s => String(s.id) === String(currentSessionId)) || {}
+      const base = parseFloat(sess.base_price) || 0
+      let total = 0
+      Array.from(selected).forEach(id => {
+        const seatEl = seatMap[id]
+        if(!seatEl) return
+        const cat = (seatEl.dataset.category || '').toUpperCase()
+        const mult = cat.includes('VIP') ? 1.5 : 1.0
+        total += base * mult
+      })
+      const concessionMult = getConcessionMultiplier()
+      const totalAfter = Math.round(total * concessionMult * 100) / 100
+      if(priceEl) priceEl.textContent = `Total: $${totalAfter.toFixed(2)}`
+      purchaseBtn.textContent = `Purchase selected seats (Total: $${totalAfter.toFixed(2)})`
+      purchaseBtn.disabled = false
+    }
+    // wire auth submit
+    try{ document.getElementById('authSubmit').addEventListener('click', handleUserAuth) }catch(e){/*ignore*/}
+  </script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+cinema_backend/
+│
+├── main.py
+├── requirements.txt
+├── README.md
+│
+├── api/
+│   ├── __init__.py
+│   ├── auth.py
+│   ├── films.py
+│   ├── sessions.py
+│   ├── bookings.py
+│
+├── schemas/
+│   ├── __init__.py
+│   ├── auth.py
+│   ├── film.py
+│   ├── session.py
+│   ├── booking.py
+│
+├── models/
+│   ├── __init__.py
+│   ├── user.py
+│   ├── film.py
+│   ├── hall.py
+│   ├── seat.py
+│   ├── session.py
+│   ├── booking.py
+│   ├── payment.py
+│   └── enums.py
+│
+├── services/
+│   ├── __init__.py
+│   ├── booking_facade.py
+│   └── auth_service.py
+│
+├── repositories/
+│   ├── __init__.py
+│   ├── user_repository.py
+│   ├── film_repository.py
+│   ├── session_repository.py
+│   ├── booking_repository.py
+│   └── payment_repository.py
+│
+├── db/
+│   ├── __init__.py
+│   ├── base.py
+│   ├── session.py
+│   └── init_db.py
+│
+└── core/
+    ├── __init__.py
+    ├── config.py
+    ├── security.py
+    └── exceptions.py
